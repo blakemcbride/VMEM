@@ -14,10 +14,10 @@
 .\"
 .\"
 .de HD
-`sp 2
-`ul 1
-`tl ''VIRTUAL MEMORY FUNCTION OVERVIEW'4/24/88'
-`sp 3
+'sp 2
+'ul 1
+'tl ''VIRTUAL MEMORY FUNCTION OVERVIEW'4/24/88'
+'sp 3
 ..
 .wh 0 HD
 .DS
@@ -35,4 +35,3 @@ VM_realloc      Re-size Allocated Memory
 VM_rest         Restore from Disk
 VM_stat         Get Various Status Variables
 
-

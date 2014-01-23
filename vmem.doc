@@ -15,17 +15,17 @@
 .\"
 .DP 0 5 0 0 0 0
 .de HD
-`sp 2
-`tl ''VIRTUAL MEMORY SYSTEM DOCUMENTATION'3/30/91'
-`tl ''-----------------------------------''
-`sp 2
+'sp 2
+'tl ''VIRTUAL MEMORY SYSTEM DOCUMENTATION'3/30/91'
+'tl ''-----------------------------------''
+'sp 2
 ..
 .wh 0 HD
 .de FN
 .bp
 .DS
 .bo 1
-.tl '\$1''\$2'
+.tl '\\$1''\\$2'
 .sp 2
 .in 5
 ..
@@ -44,7 +44,7 @@ Example:
 .de SA
 .in 0
 .sp 2
-See also:  \$1
+See also:  \\$1
 ..
 .DS
 .sp 8
@@ -358,4 +358,3 @@ option requires more disk space to perform the compaction but leaves a smaller
 file in the end.  Your individual needs will dictate the most appropriate
 method to use.
 .SA "VM_parm"
-

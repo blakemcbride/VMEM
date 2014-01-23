@@ -1,21 +1,22 @@
+.\"  Macros for use with nroff
 .po 5
 .de FT
-`sp 2
-`tl ''-%-'Copyright 1988 Blake McBride'
-`bp
+'sp 2
+'tl ''-%-'Copyright 1988 Blake McBride'
+'bp
 ..
 .wh -5 FT
 .nr f 1			     \"signal footer enabled
 .de SP                       \"set spacing between paragraphs
-.nr x \$1
+.nr x \\$1
 ..
 .de NE                       \"set need
-.nr z \$1
+.nr z \\$1
 ..
 .de LL                       \"line length
-.nr w \$1
-.ll \$1
-.lt \$1
+.nr w \\$1
+.ll \\$1
+.lt \\$1
 ..
 .de NF                       \"no footer
 .wh -5
@@ -23,15 +24,15 @@
 ..
 .de PL                       \"page length
 .if \nf .wh -5
-.pl \$1
+.pl \\$1
 .if \nf .wh -5 FT
 ..
 .de RC                       \"reset counter
-.nr a \$1
-.nr b \$2
-.nr c \$3
-.nr d \$4
-.nr e \$5
+.if !'\\$1''  .nr a \\$1
+.if !'\\$2''  .nr b \\$2
+.if !'\\$3''  .nr c \\$3
+.if !'\\$4''  .nr d \\$4
+.if !'\\$5''  .nr e \\$5
 ..
 .RC 0 0 0 0 0
 .SP 2
@@ -48,19 +49,19 @@
 .fi
 ..
 .de DP                   \"define paragraph - indent, ti, right indent,ul,cu,bo
-.nr y \$1
-.nr v \$2
-.nr u \$3
-.nr r \$4
-.nr s \$5
-.nr t \$6
+.if !'\\$1''  .nr y \\$1
+.if !'\\$2''  .nr v \\$2
+.if !'\\$3''  .nr u \\$3
+.if !'\\$4''  .nr r \\$4
+.if !'\\$5''  .nr s \\$5
+.if !'\\$6''  .nr t \\$6
 ..
 .de NP                       \"new paragraph - increment counters
-.nr a +\$1
-.nr b +\$2
-.nr c +\$3
-.nr d +\$4
-.nr e +\$5
+.if !'\\$1''  .nr a +\\$1
+.if !'\\$2''  .nr b +\\$2
+.if !'\\$3''  .nr c +\\$3
+.if !'\\$4''  .nr d +\\$4
+.if !'\\$5''  .nr e +\\$5
 .sp \nx
 .ne \nz
 .ll \nw
@@ -71,4 +72,3 @@
 .cu \ns
 .bo \nt
 ..
-

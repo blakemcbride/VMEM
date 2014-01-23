@@ -11,7 +11,7 @@
  *             blake@mcbride.name
  *
  *
- *	 	See the "copyrite" file for usage terms.
+ *	 	See the "License.txt" file for usage terms.
 */
 
 
@@ -118,18 +118,205 @@
  *			Added support for Turbo C and UNIX.
  *
  *			Enhanced support for huge allocations.
+ *
+ *		Version 4.0 - 1/22/14
+ *
+ *			Updated system for ANSI C
 */
 
+#include <stdlib.h>
+#include <string.h>
 #include "vmem.h"
 
-STATIC	long	longwrite(), longread();
-STATIC	char	HUGE	*rmalloc();
+/*  
+    Currently setup for MicroSoft C and Turbo C and UNIX - they handle huge 
+    pointers differently and have different huge allocation functions.
+*/
 
-#ifdef	NO_MEMMOVE
-char	*memmove();
+
+#include <stdio.h>
+#ifdef _MSC_VER
+#include <dos.h>
+#include <io.h>
+#else
+#define	O_BINARY	0
+#endif
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+
+/*  #define DEBUG	*/
+
+/* #define  USE_MALLOC */	/*  Force malloc instead of huge alloc
+				   function */
+
+#if !defined(__TURBOC__)  &&  !defined(_MSC_VER)
+#define	USE_MALLOC
 #endif
 
-long	*VM_stat()
+#ifndef OPEN
+#define OPEN		open
+#endif
+
+#ifndef	DEBUG
+#define	TEST(f,n)
+#endif
+
+#define FNAME(x)	static char fun[] = #x
+
+#ifdef __TURBOC__
+#define NO_ALLOCA 1024
+#endif
+
+#ifdef	unix
+#define	NO_ALLOCA 4096
+#define	NO_ATEXIT
+#define	NO_MEMMOVE
+#endif
+
+#ifdef	_MSC_VER
+
+#define	HPtoL(p)  (((unsigned long)FP_SEG(p)<<4) + (unsigned long)FP_OFF(p))
+static	char HUGE   *HPtoFP();	/*  don't use this with OS/2 (use the #else)  */
+#define	EQ(x,y)		(long)((char huge *) (x) - (char huge *) (y)) == 0L
+#define	GT(x,y)		(long)((char huge *) (x) - (char huge *) (y)) >	 0L
+#define	LT(x,y)		(long)((char huge *) (x) - (char huge *) (y)) <	 0L
+#define	GTE(x,y)	(long)((char huge *) (x) - (char huge *) (y)) >= 0L
+
+#else
+
+#define	HPtoL(p)	p
+#define	HPtoFP(p)	p
+#define	EQ(x,y)		x == y
+#define	GT(x,y)		x >  y
+#define	LT(x,y)		x <  y
+#define	GTE(x,y)	x >= y
+
+#endif
+
+
+#define	MT_NOTUSED	0x00	/*  free vm header			*/
+#define	MT_IMEDIATE	0x01	/*  object located in vm header		*/
+#define	MT_MEMORY	0x02	/*  object in real memory		*/
+#define	MT_DISK		0x04	/*  object located on disk		*/
+#define	MT_DIRTY	0x08	/*  object has been modified		*/
+#define	MT_FREEZE	0x10	/*  object frozen in real memory	*/
+
+#define	VMBASESIZ	255
+#define	VMLEGSIZ	255
+#define	MAXSALOC	500000L	/*  maximum single object size		*/
+#define	RMCHUNK(x) ((x + sizeof(RMHEAD)	- 1) / sizeof(RMHEAD)) * sizeof(RMHEAD)
+#define	DHEADSIZE	100	/* number of disk free pointers	in core	block */
+#define	IMSIZE		(sizeof(VMbase[0]->mru_link) + sizeof(VMbase[0]->lru_link) + sizeof(VMbase[0]->size) + sizeof(VMbase[0]->mem) +	sizeof(VMbase[0]->diskadd))
+#define FILE_BLOCK	16384	/* largest single file block  */
+
+
+typedef	unsigned long	MAX_SIZ_TYP;
+
+typedef	union  {
+	struct	{
+		LEG_TYPE	l;
+		BASE_TYPE	b;
+	}	p;
+	VMPTR_TYPE	i;
+}	VMPTR;
+
+typedef	struct	VMSTRUCT  {
+	char	type;
+	VMPTR	mru_link;
+	VMPTR	lru_link;
+	MAX_SIZ_TYP	size;
+	char	HUGE	*mem;
+	long	diskadd;
+}	VMHEAD;
+
+typedef	int	ALIGN;
+
+typedef	union	RMSTRUCT  {
+	struct	{
+		union	RMSTRUCT  HUGE	    *next;
+		long	size;
+	}	s;
+	ALIGN	x;
+}	RMHEAD;
+
+typedef	RMHEAD HUGE *RMHEAD_PTR;
+
+typedef	struct	DFSTRUCT  {
+	long	diskaddr[DHEADSIZE];
+	long	nfree[DHEADSIZE];
+	struct	DFSTRUCT   HUGE	*next;
+}	DFREE;
+
+
+static	int	makemore(long s);
+static	int	morecore(MAX_SIZ_TYP s);
+static	void	rmfree(RMHEAD_PTR h, MAX_SIZ_TYP n);
+static	void	vmfree_head(VMPTR_TYPE i);
+static	void	vm_link(VMHEAD HUGE *h, VMPTR_TYPE i);
+static	void	vm_unlink(VMHEAD HUGE *h);
+static	void	compact(void);
+static	void	d_compact(void);
+static	void	d_compact1(void);
+static	void	d_compact2(void);
+static	void	dm_new(void);
+static	void	page_out(VMHEAD	HUGE *h);
+static	long	disk_next(long s, char HUGE *buf);
+static	VMHEAD	HUGE	*page_in(VMHEAD	HUGE *h, VMPTR_TYPE i);
+static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf);
+static	int	make_swap(void);
+static	DFREE HUGE *dfree_new(void);
+static	void	dfree_free(void);
+static	long	get_la(long la);
+static	VMHEAD HUGE  *get_dmem(long da);
+static	void	rest_clean(int lev, int h, int mb, int mi);
+static	void	error(char *f, char *m);
+
+static	long	longwrite(), longread();
+static	char	HUGE	*rmalloc();
+
+extern	long	lseek();
+
+static	RMHEAD_PTR  RMfree = NULL;		/* pointer to free real	memory chain  */
+static	RMHEAD_PTR  RMsmem = NULL;		/* keep	track of system	allocations for	future release	*/
+static	long	RMtotal	 = 0L;			/* total allocated from	system	*/
+static	long	RMnfree	 = 0L;			/* free	bytes		*/
+static	long	RMmax	 = 0L;			/* max allocated from system	*/
+static	long	RMasize	 = RMCHUNK(8000);	/* allocation chunk size	*/
+static	double	RMcompf	 = 2.0;			/* compaction factor	*/
+static	int	RMncomp	 = 0;			/* number of compactions	*/
+
+static	VMHEAD	HUGE	*VMbase[VMBASESIZ];	/* vm header table	*/
+static	VMPTR	VMfree;				/* head	of free	vm header chain	*/
+static	VMPTR	VMmru;				/* pointer to head of mru chain	*/
+static	VMPTR	VMlru;				/* pointer to tail of mru chain	*/
+static	VMPTR_TYPE VMlive = 0;			/* number of arrays in real memory	*/
+static	VMPTR_TYPE VMdisk = 0;			/* number of arrays in disk memory	*/
+static	long	VMtotal	= 0L;			/* total allocated virtual space	*/
+static	VMPTR_TYPE	VMnfreez = 0;		/* total frozen	objects			*/
+static	VMPTR_TYPE	VMnifrez = 0;		/* number of MT_IMEDIATEs frozen	*/
+
+static	long	DMnext	 = 0L;		/* number of bytes used	on disk	*/
+static	long	DMnfree	 = 0L;		/* number of free bytes	in swap	file */
+static	long	DMmfree	 = 0L;		/* max free space on swap file before compaction	*/
+static	int	DMneedflg= 0;		/* 1=couldn't find space on swap file */
+static	int	DMctype	 = 0;		/* compaction type		*/
+static	int	DMncomp	 = 0;		/* number of disk compactions	*/
+static	int	DMnfblks = 0;		/* number of free blocks in swap file	*/
+static	int	DMmfblks = 0;		/* number of free blocks in swap file before disk compaction	    */
+static	int	DMhandle = -1;		/* swap	file handle		*/
+static	DFREE	HUGE *DMflist = NULL;	/* list	of free	areas		*/
+static	char	DMfile[50];		/* swap	file name		*/
+
+int	VM_newadd = 0;			/* set to 1 when memory changed	*/
+
+
+#ifdef	NO_MEMMOVE
+static char	*memmove();
+#endif
+
+long	*VM_stat(void)
 {
 	static	long	s[16];
 
@@ -152,23 +339,25 @@ long	*VM_stat()
 	return(s);
 }
 
-void	VM_parm(rmmax, rmasize,	rmcompf, dmmfree, dmmfblks, dmctype)
-long	rmmax, rmasize,	dmmfree;
-double	rmcompf;
-int	dmmfblks, dmctype;
+void	VM_parm(long rmmax, long rmasize, double rmcompf, long dmmfree, int dmmfblks, int dmctype)
 {
-	if (rmmax    !=	-1L)	RMmax	 = rmmax;
-	if (rmasize  !=	-1L)	RMasize	 = RMCHUNK(rmasize);
+	if (rmmax    !=	-1L)	
+		RMmax	 = rmmax;
+	if (rmasize  !=	-1L)	
+		RMasize	 = RMCHUNK(rmasize);
 	if (RMmax  &&  RMmax < RMasize)
 		RMasize = RMmax;
-	if (rmcompf  >=	0.0)	RMcompf	 = rmcompf;
-	if (dmmfree  !=	-1L)	DMmfree	 = dmmfree;
-	if (dmmfblks !=	-1 )	DMmfblks = dmmfblks;
-	if (dmctype  !=	-1 )	DMctype	 = dmctype;
+	if (rmcompf  >=	0.0)	
+		RMcompf	 = rmcompf;
+	if (dmmfree  !=	-1L)	
+		DMmfree	 = dmmfree;
+	if (dmmfblks !=	-1 )	
+		DMmfblks = dmmfblks;
+	if (dmctype  !=	-1 )	
+		DMctype	 = dmctype;
 }
 
-STATIC	char	HUGE	*rmalloc(n)
-MAX_SIZ_TYP	n;
+static	char	HUGE	*rmalloc(MAX_SIZ_TYP n)
 {
 	RMHEAD_PTR	h = NULL, b = NULL, p, pb;
 	long	s, d = 0L;
@@ -213,8 +402,7 @@ MAX_SIZ_TYP	n;
 	return HPtoFP((char HUGE *) b);
 }
 
-STATIC	int	makemore(s)
-long	s;
+static	int	makemore(long s)
 {
 	VMHEAD	HUGE	*h;
 
@@ -228,16 +416,14 @@ long	s;
 	return(0);
 }
 
-STATIC	int	morecore(s)
-MAX_SIZ_TYP	s;
+static	int	morecore(MAX_SIZ_TYP s)
 {
 	RMHEAD_PTR	p;
 	unsigned long	n;
-	char *malloc();
 #if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
 	char HUGE *farmalloc();
 #endif
-#if defined(MSC)  &&  !defined(USE_MALLOC)
+#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
 	char HUGE *halloc();
 #endif
 	FNAME(morecore);
@@ -254,7 +440,7 @@ MAX_SIZ_TYP	s;
 #if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
 	p = (RMHEAD_PTR) farmalloc(n);
 #else
-#if defined(MSC)  &&  !defined(USE_MALLOC)
+#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
 	p = (RMHEAD_PTR) halloc(n, 1);
 #else
 	p = (RMHEAD_PTR) malloc((unsigned) n);
@@ -270,7 +456,7 @@ MAX_SIZ_TYP	s;
 	return(0);
 }
 
-void	VM_fcore()
+void	VM_fcore(void)
 {
 	RMHEAD_PTR	n, p;
 
@@ -280,7 +466,7 @@ void	VM_fcore()
 #if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
 		farfree((char HUGE *) p);
 #else
-#if defined(MSC)  &&  !defined(USE_MALLOC)
+#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
 		hfree((char HUGE *) p);
 #else
 		free((char *) p);
@@ -295,12 +481,10 @@ void	VM_fcore()
 	TEST("VM_fcore", 1);
 }
 
-STATIC	void	rmfree(h, n)
-RMHEAD_PTR	h;
-MAX_SIZ_TYP	n;
+static	void	rmfree(RMHEAD_PTR h, MAX_SIZ_TYP n)
 {
 	RMHEAD_PTR	f;
-#ifdef	MSC
+#ifdef	_MSC_VER
 	RMHEAD_PTR	t;
 #endif
 
@@ -326,7 +510,7 @@ MAX_SIZ_TYP	n;
 	for (f=RMfree ;	f->s.next ; f=f->s.next)
 		if (LT(f, h)  &&  LT(h, f->s.next))
 			break;
-#ifdef	MSC	    /*	for some reason	MSC-4.0	won't compile without t  */
+#ifdef	_MSC_VER	    /*	for some reason	MSC-4.0	won't compile without t  */
 	t = f +	(f->s.size / (long) sizeof(RMHEAD));
 	if (EQ(t, h))
 #else
@@ -344,7 +528,7 @@ MAX_SIZ_TYP	n;
 	}
 }
 
-STATIC	VMPTR_TYPE	vmget_head()
+static	VMPTR_TYPE	vmget_head(void)
 {
 	VMPTR_TYPE	r;
 	register int	b, i;
@@ -380,8 +564,7 @@ STATIC	VMPTR_TYPE	vmget_head()
 	return(r);
 }
 
-STATIC	void	vmfree_head(i)
-VMPTR_TYPE	i;
+static	void	vmfree_head(VMPTR_TYPE i)
 {
 	VMPTR	t;
 
@@ -392,9 +575,7 @@ VMPTR_TYPE	i;
 	VMfree.i = i;
 }
 
-VMPTR_TYPE	VM_alloc(s, zero)
-long	s;
-int	zero;
+VMPTR_TYPE	VM_alloc(long s, int zero)
 {
 	VMHEAD	HUGE	*h;
 	VMPTR	p;
@@ -402,7 +583,7 @@ int	zero;
 	FNAME(VM_alloc);
 
 	TEST(fun, 0);
-#if (defined(__TURBOC__)  ||  defined(MSC))  &&  defined(USE_MALLOC)
+#if (defined(__TURBOC__)  ||  defined(_MSC_VER))  &&  defined(USE_MALLOC)
 	if (s > 65534U)
 		return(0);
 #endif
@@ -453,12 +634,10 @@ int	zero;
 	return(p.i);
 }
 
-char	HUGE	*VM_addr(i, dirty, frez)
-VMPTR_TYPE	i;
-int	dirty, frez;
+char	HUGE	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 {
 	VMPTR	p;
-	VMHEAD	HUGE *h, HUGE *t, HUGE *page_in();
+	VMHEAD	HUGE *h, HUGE *t;
 	FNAME(VM_addr);
 
 	TEST(fun, 0);
@@ -492,7 +671,7 @@ int	dirty, frez;
 
   /*  d_compact	may call d_compact1, dfree_new,	rmalloc, compact and change the	address	 */
 
-		h = (VMHEAD HUGE	*) &VMbase[p.p.b][p.p.l];
+		h = (VMHEAD HUGE *) &VMbase[p.p.b][p.p.l];
 
 		h = page_in(h, p.i);
 		if (!h)
@@ -516,9 +695,7 @@ int	dirty, frez;
 	return (char HUGE *) h->mem;
 }
 
-STATIC	void	vm_link(h, i)	/*  add	to head	of lru link	*/
-VMHEAD HUGE	*h;
-VMPTR_TYPE	i;
+static	void	vm_link(VMHEAD HUGE *h, VMPTR_TYPE i)	/*  add	to head	of lru link	*/
 {
 	h->mru_link.i =	0;
 	if (h->lru_link.i = VMmru.i)
@@ -528,8 +705,7 @@ VMPTR_TYPE	i;
 		VMlru.i	= i;
 }
 
-STATIC	void	vm_unlink(h)	/*  take out of	lru link	*/
-VMHEAD HUGE	*h;
+static	void	vm_unlink(VMHEAD HUGE *h)	/*  take out of	lru link	*/
 {
 	if (h->mru_link.i)
 		VMbase[h->mru_link.p.b][h->mru_link.p.l].lru_link.i = h->lru_link.i;
@@ -541,9 +717,7 @@ VMHEAD HUGE	*h;
 		VMlru.i	= h->mru_link.i;
 }
 
-VMPTR_TYPE	VM_realloc(i, s)
-VMPTR_TYPE	i;
-long		s;
+VMPTR_TYPE	VM_realloc(VMPTR_TYPE i, long s)
 {
 	VMPTR_TYPE	n;
 	char	HUGE	*f, HUGE	*t;
@@ -551,7 +725,8 @@ long		s;
 	VMHEAD	HUGE	*h;
 
 	f = VM_addr(i, 0, 0);
-	if (!f)		return(0);
+	if (!f)
+		return(0);
 	p.i = i;
 	h = (VMHEAD HUGE	*) &VMbase[p.p.b][p.p.l];
 	if (h->type & MT_IMEDIATE  &&  s <= IMSIZE)
@@ -559,14 +734,15 @@ long		s;
 	if (h->type & MT_MEMORY	 &&  s == h->size)
 		return(i);
 	n = VM_alloc(s, 0);
-	if (!n)		return(0);
+	if (!n)
+		return(0);
 	t = VM_addr(n, 1, 0);
 
-	/* just	incase VM_alloc	did a compact	*/
+	/* just	in case VM_alloc did a compact	*/
 
-	h = (VMHEAD HUGE	*) &VMbase[p.p.b][p.p.l];
+	h = (VMHEAD HUGE *) &VMbase[p.p.b][p.p.l];
 
-	/* incase both arrays can't be in memory        */
+	/* in case both arrays can't be in memory  */
 
 	if (h->type & MT_DISK)	{
 		VM_free(n);
@@ -582,8 +758,7 @@ long		s;
 	return(n);
 }
 
-void	VM_free(i)
-VMPTR_TYPE	i;
+void	VM_free(VMPTR_TYPE i)
 {
 	VMPTR	p;
 	VMHEAD	HUGE *h, HUGE *t;
@@ -593,7 +768,7 @@ VMPTR_TYPE	i;
 	p.i = i;
 	if (!i	||  p.p.b >= VMBASESIZ	||  p.p.l >= VMLEGSIZ  ||  !VMbase[p.p.b])
 		return;
-	h = (VMHEAD HUGE	*) &VMbase[p.p.b][p.p.l];
+	h = (VMHEAD HUGE *) &VMbase[p.p.b][p.p.l];
 	if (h->type == MT_NOTUSED)
 		return;
 	if (h->type & MT_IMEDIATE)  {
@@ -629,7 +804,7 @@ VMPTR_TYPE	i;
 	TEST(fun, 3);
 }
 
-STATIC	void	compact()
+static	void	compact(void)
 {
 	RMHEAD_PTR	h, a, p=NULL, t;
 	register int	b, i;
@@ -685,7 +860,6 @@ STATIC	void	compact()
 				}
 
 		if (!f)	 {
-
 			h->s.next = s.s.next;
 			h->s.size = s.s.size;
 			if (p == NULL)
@@ -703,13 +877,13 @@ STATIC	void	compact()
 	}
 }
 
-int	VM_init()
+int	VM_init(void)
 {
 	int	r;
 	static	int	once = 1;
-	void	VM_fcore();
 
-	if (DMhandle !=	-1)	return(0);
+	if (DMhandle !=	-1)
+		return(0);
 	if (once)  {
 		once = 0;
 #ifndef	NO_ATEXIT
@@ -727,7 +901,7 @@ int	VM_init()
 	return(0);
 }
 
-STATIC	dm_new()
+static	void	dm_new(void)
 {
 	DMneedflg    = 0;
 	DMnext	     = 0L;
@@ -737,8 +911,7 @@ STATIC	dm_new()
 	dfree_free();
 }
 
-STATIC	void	page_out(h)
-VMHEAD	HUGE	*h;
+static	void	page_out(VMHEAD	HUGE *h)
 {
 	FNAME(page_out);
 
@@ -763,9 +936,7 @@ VMHEAD	HUGE	*h;
 	VM_newadd = 1;
 }
 
-STATIC	long	disk_next(s, buf)
-long	s;
-char HUGE *buf;
+static	long	disk_next(long s, char HUGE *buf)
 {
 	/* variable prefix:  b=best,  c=current	 */
 	/* variable suffix:  a=address,	s=size,	i=index	 */
@@ -842,9 +1013,7 @@ retry:
 	return(da);
 }
 
-STATIC	VMHEAD	HUGE	*page_in(h, i)
-VMHEAD	HUGE	*h;
-VMPTR_TYPE	i;
+static	VMHEAD	HUGE	*page_in(VMHEAD	HUGE *h, VMPTR_TYPE i)
 {
 	VMPTR	p;
 	char HUGE  *t;
@@ -872,10 +1041,8 @@ VMPTR_TYPE	i;
 	return(h);
 }
 
-STATIC	int	free_disk(sz, da, naf)
-MAX_SIZ_TYP	sz;
-long		da;
-int		naf;	/*  no allocations flag		*/
+static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf)
+/* int		naf;	  no allocations flag		*/
 {
 	register int	ci;	/*  current index into disk free block	*/
 	int	hflg = 1;	/*  0 indicates	head hit		*/
@@ -944,7 +1111,7 @@ int		naf;	/*  no allocations flag		*/
 	return(0);	/*  all	ok	*/
 }
 
-STATIC	int	make_swap()
+static	int	make_swap(void)
 {
 	char	*p, *mktemp(), *getenv();
 	FNAME(make_swap);
@@ -965,13 +1132,13 @@ STATIC	int	make_swap()
 	return(0);
 }
 
-STATIC	void	d_compact()
+static	void	d_compact(void)
 {
 	if (DMneedflg  &&  (DMmfree  &&	 DMnfree > DMmfree  ||	DMmfblks  &&  DMnfblks > DMmfblks))
 		VM_dcmps();
 }
 
-void	VM_dcmps()
+void	VM_dcmps(void)
 {
 	if (DMctype)
 		d_compact2();	/* use 2 files	*/
@@ -984,7 +1151,7 @@ void	VM_dcmps()
 
 /*  this compactor requires two	files	*/
 
-STATIC	void	d_compact2()
+static	void	d_compact2(void)
 {
 	register int	 b, i;
 	VMHEAD	HUGE	*v;
@@ -994,13 +1161,14 @@ STATIC	void	d_compact2()
 	char	dbuf[NO_ALLOCA];
 	unsigned	bufsiz = NO_ALLOCA;
 #else
-	char	*dbuf, *alloca();
+	char	*dbuf;
 	unsigned	bufsiz = 2048;
 #endif
 	FNAME(d_compact2);
 
 #ifndef NO_ALLOCA
-	while (NULL == (dbuf = alloca(bufsiz)))		bufsiz /= 2;
+	while (NULL == (dbuf = alloca(bufsiz)))
+		bufsiz /= 2;
 #endif
 	strcpy(fn, DMfile);
 	handle = DMhandle;
@@ -1036,15 +1204,15 @@ STATIC	void	d_compact2()
 		error(fun, "unlink");
 }
 
-STATIC	void	d_compact1()
+static	void	d_compact1(void)
 {
 	register int	 b, i;
-	VMHEAD	HUGE	*v, HUGE	*get_dmem();
+	VMHEAD	HUGE	*v;
 #ifdef NO_ALLOCA
 	char	dbuf[NO_ALLOCA];
 	unsigned	bufsiz = NO_ALLOCA;
 #else
-	char	*dbuf, *alloca();
+	char	*dbuf;
 	unsigned	bufsiz = 2048;
 #endif
 	long	la = -1L, get_la();
@@ -1053,7 +1221,8 @@ STATIC	void	d_compact1()
 	FNAME(d_compact1);
 
 #ifndef NO_ALLOCA
-	while (NULL == (dbuf = alloca(bufsiz)))		bufsiz /= 2;
+	while (NULL == (dbuf = alloca(bufsiz)))
+		bufsiz /= 2;
 #endif
 	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)
 		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
@@ -1091,7 +1260,7 @@ STATIC	void	d_compact1()
 	DMnfblks = 1;
 }
 
-STATIC	DFREE HUGE *dfree_new()
+static	DFREE HUGE *dfree_new(void)
 {
 	DFREE HUGE *d, HUGE *ca;
 	register int	i;
@@ -1113,7 +1282,7 @@ STATIC	DFREE HUGE *dfree_new()
 	return(d);
 }
 
-STATIC	void	dfree_free()
+static	void	dfree_free(void)
 {
 	DFREE	HUGE	*ca;
 
@@ -1124,8 +1293,7 @@ STATIC	void	dfree_free()
 	}
 }
 
-STATIC	long	get_la(la)    /*  get lowest free block	address	 */
-long	la;
+static	long	get_la(long la)    /*  get lowest free block	address	 */
 {
 	register int	ci;	/*  current index into disk free block	*/
 	DFREE HUGE *ca =	DMflist; /*  address of	current	free block	 */
@@ -1138,8 +1306,7 @@ long	la;
 	return(la);
 }
 
-STATIC	VMHEAD HUGE  *get_dmem(da)    /*	get vm pointer which is	stored just past da  */
-long	da;
+static	VMHEAD HUGE  *get_dmem(long da)    /* get vm pointer which is stored just past da  */
 {
 	register int	 b, i;
 	VMHEAD	HUGE	*v, HUGE *r = NULL;
@@ -1155,8 +1322,7 @@ long	da;
 	return(r);
 }
 
-int	VM_dump(f)
-char	*f;
+int	VM_dump(char *f)
 {
 	short	mb;
 	register int	i, b;
@@ -1165,7 +1331,7 @@ char	*f;
 	char	dbuf[NO_ALLOCA];
 	unsigned	bufsiz = NO_ALLOCA;
 #else
-	char	*dbuf, *alloca();
+	char	*dbuf;
 	unsigned	bufsiz = 2048;
 #endif
 	VMHEAD	HUGE *v;
@@ -1175,7 +1341,8 @@ char	*f;
 	h = OPEN(f, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, S_IREAD | S_IWRITE);
 	if (h == -1)		return(1);
 #ifndef NO_ALLOCA
-	while (NULL == (dbuf = alloca(bufsiz)))		bufsiz /= 2;
+	while (NULL == (dbuf = alloca(bufsiz)))
+		bufsiz /= 2;
 #endif
 	if (sizeof(VMfree) != write(h, (char *)	&VMfree, sizeof(VMfree)))
 		goto er2;
@@ -1222,7 +1389,7 @@ er2:
 	return(2);		/*  write error	*/
 }
 
-void	VM_end()
+void	VM_end(void)
 {
 	register int	i, b;
 	VMHEAD	HUGE	*v;
@@ -1254,8 +1421,7 @@ void	VM_end()
 	TEST(fun, 1);
 }
 
-int	VM_rest(f)
-char	*f;
+int	VM_rest(char *f)
 {
 	short	mb;
 	register int	i, b;
@@ -1324,8 +1490,7 @@ char	*f;
 	return(0);
 }
 
-int	VM_frest(f)
-char	*f;
+int	VM_frest(char *f)
 {
 	short	mb;
 	register int	i, b;
@@ -1385,8 +1550,7 @@ char	*f;
 	return(0);
 }
 
-STATIC	void	rest_clean(lev, h, mb, mi)
-int	lev, h, mb, mi;
+static	void	rest_clean(int lev, int h, int mb, int mi)
 {
 	register int	b, i;
 	VMHEAD HUGE	*v;
@@ -1408,10 +1572,7 @@ int	lev, h, mb, mi;
 	}
 }
 
-STATIC	long	longread(fh, buf, n)
-int	fh;
-char HUGE *buf;
-long	n;
+static	long	longread(int fh, char HUGE *buf, long n)
 {
 	int	len, len2;
 	long	tot = 0L;
@@ -1430,10 +1591,7 @@ long	n;
 	return tot;
 }
 
-STATIC	long	longwrite(fh, buf, n)
-int	fh;
-char HUGE *buf;
-long	n;
+static	long	longwrite(int fh, char HUGE *buf, long n)
 {
 	int	len, len2;
 	long	tot = 0L;
@@ -1452,7 +1610,7 @@ long	n;
 	return tot;
 }
 
-#ifdef	MSC
+#ifdef	_MSC_VER
 
 /*
     This function should not be	used in	OS/2 because you can't just use any
@@ -1460,8 +1618,7 @@ long	n;
 */
 
 
-STATIC	char HUGE   *HPtoFP(n)	/* huge	pointer	to far pointer	*/
-char HUGE  *n;
+static	char HUGE   *HPtoFP(char HUGE *n)	/* huge	pointer	to far pointer	*/
 {
 	register unsigned  s, o;
 	unsigned	d;
@@ -1481,15 +1638,13 @@ char HUGE  *n;
 
 #endif
 
-STATIC	void	error(f, m)
-char	*f, *m;
+static	void	error(char *f, char *m)
 {
 	fprintf(stderr,	"\nVM system error - %s, %s\n",	f, m);
 	exit(-1);
 }
 
-VM_heapwalk(fp)
-FILE	*fp;
+void VM_heapwalk(FILE *fp)
 {
 	VMHEAD HUGE *v;
 	VMPTR handle;
@@ -1510,7 +1665,7 @@ FILE	*fp;
 					fprintf(fp, "Immediate storage\n");
 					break;
 				case MT_MEMORY:
-					fprintf(fp, "%u bytes at %p", v->size, v->mem);
+					fprintf(fp, "%lu bytes at %p", v->size, v->mem);
 					if (v->diskadd != -1L)
 						fprintf(fp, " (On disk at %08lX)", v->diskadd);
 					if (v->type & MT_DIRTY)
@@ -1520,7 +1675,7 @@ FILE	*fp;
 					fprintf(fp, "\n");
 					break;
 				case MT_DISK:
-					fprintf(fp, "%u bytes on disk at %08lX\n", v->size, v->diskadd);
+					fprintf(fp, "%lu bytes on disk at %08lX\n", v->size, v->diskadd);
 					break;
 				default:
 					fprintf(fp, "Invalid memory type\n");
@@ -1533,9 +1688,7 @@ FILE	*fp;
 
 #ifdef	DEBUG
 
-STATIC	TEST(fun, n)
-char	*fun;
-int	n;
+static	TEST(char *fun, int n)
 {
 	long	trm, tdm;
 
@@ -1544,10 +1697,7 @@ int	n;
 	dm_test(fun, n,	tdm);
 }
 
-STATIC	rm_test(fun, n,	trm)
-char	*fun;
-int	n;
-long	trm;
+static	rm_test(char *fun, int n, long trm)
 {
 	RMHEAD_PTR	h;
 	long	s;
@@ -1567,10 +1717,7 @@ long	trm;
 		terror(fun, n, "RMtotal not all accessable");
 }
 
-STATIC	dm_test(fun, n,	tdm)
-char	*fun;
-int	n;
-long	tdm;
+static	dm_test(char *fun, int n, long tdm)
 {
 	register int	ci;
 	long	ts, cs,	da;
@@ -1605,10 +1752,7 @@ long	tdm;
 		terror(fun, n, "DMnfblks wrong");
 }
 
-STATIC	vm_test(fun, n,	ptrm, ptdm)
-char	*fun;
-int	n;
-long	*ptrm, *ptdm;
+static	vm_test(char *fun, int n, long *ptrm, long *ptdm)
 {
 	register int	b, i;
 	int	mb;
@@ -1720,9 +1864,7 @@ long	*ptrm, *ptdm;
 	*ptdm =	tdm;
 }
 
-STATIC	void	terror(f, n, m)
-char	*f, *m;
-int	n;
+static	void	terror(char *f, int n, char *m)
 {
 	fprintf(stderr,	"\nVM test error - %s, %d, %s\n", f, n,	m);
 	exit(-1);
@@ -1733,13 +1875,10 @@ int	n;
 
 #ifdef	NO_MEMMOVE
 
-char	*memmove(t, f, n)
-register char HUGE *f, HUGE *t;
-register unsigned n;
+static char	*memmove(char HUGE *t, char HUGE *f, unsigned n)
 {
-	char	*r;
+	char	*r = t;
 
-	r = t;
 	if (f == t || n	<= 0)
 		return(r);
 	if (f >	t)

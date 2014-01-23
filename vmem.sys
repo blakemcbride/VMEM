@@ -15,10 +15,11 @@
 .\"
 .DP 0 5 0 0 0 0
 .de HD
-`sp 3
-`cu 1
-`tl ''Virtual Memory System Internals'7/09/88'
-`sp 2
+'sp 3
+'cu 1
+'tl ''Virtual Memory System Internals'7/09/88'
+'cu 0
+'sp 2
 ..
 .wh 0 HD
 .DS
@@ -175,4 +176,3 @@ VM_addr()) it is taken out of the linked list and put at the head.  Whenever
 there is a lack of real memory the objects at the tail are paged out until 
 the real memory requirements are met.
 
-

@@ -4,29 +4,11 @@
 
 #define	HPtoL(p)  (((unsigned long)FP_SEG(p)<<4) + (unsigned long)FP_OFF(p))
 
-char far   *HPtoFP(n)
-char huge  *n;
-{
-	register unsigned  s, o;
-	unsigned	d;
-	char	far	*p;
-
-	o = FP_OFF(n);
-	s = FP_SEG(n);
-	if (o >	16)  {
-		d = o &	~0xf;
-		o -= d;
-		s += (d>>4);
-	}
-	FP_OFF(p) = o;
-	FP_SEG(p) = s;
-	return(p);
-}
+static char far   *HPtoFP(char huge  *n);
 
 
-main(argc, argv)
-int	argc;
-char	*argv[];
+
+int main(int argc, char *argv[])
 {
 	union  {
 		struct	{
@@ -35,7 +17,7 @@ char	*argv[];
 		}	v;
 		char huge *h;
 		char far  *f;
-		unsigned long	l;
+		unsigned long l;
 	}	x, y, t;
 	char	*p;
 
@@ -65,5 +47,23 @@ char	*argv[];
 	t.l = x.l;
 	t.h += 1;
 	printf("H1 + 1 is %u:%u (%lu)\n", t.v.seg, t.v.off, HPtoL(t.h));
+	return 0;
 }
 
+static char far   *HPtoFP(char huge  *n)
+{
+	register unsigned  s, o;
+	unsigned	d;
+	char far *p;
+
+	o = FP_OFF(n);
+	s = FP_SEG(n);
+	if (o > 16)  {
+		d = o & ~0xf;
+		o -= d;
+		s += (d>>4);
+	}
+	FP_OFF(p) = o;
+	FP_SEG(p) = s;
+	return(p);
+}

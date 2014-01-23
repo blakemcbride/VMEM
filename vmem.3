@@ -1,7 +1,8 @@
 
 
 
-                         _V_i_r_t_u_a_l_ _M_e_m_o_r_y_ _S_y_s_t_e_m_ _I_n_t_e_r_n_a_l_s            _7_/_0_9_/_8_8
+                         [4mVirtual[24m [4mMemory[24m [4mSystem[24m [4mInternals[24m            [4m7/09/88[0m
+
 
 
 
@@ -60,64 +61,64 @@
 
 
 
-
-                                       -1-     Copyright 1988 Blake McBride
-
+                                       ‐1‐     Copyright 1988 Blake McBride
 
 
 
 
-                         _V_i_r_t_u_a_l_ _M_e_m_o_r_y_ _S_y_s_t_e_m_ _I_n_t_e_r_n_a_l_s            _7_/_0_9_/_8_8
+
+                         [4mVirtual[24m [4mMemory[24m [4mSystem[24m [4mInternals[24m            [4m7/09/88[0m
 
 
 
 
-          The purpose of this narrative is to give a brief  description  of
-     how  the  internals  of  the  Virtual Memory (VM) system work.  An ex-
-     planation of the key global data structures  used  by  the  VM  system
-     along  with an analysis of the source code should be sufficient to un-
-     derstand the internal operation of the VM system.
+
+     The  purpose  of  this narrative is to give a brief description of how
+     the internals of the Virtual Memory (VM) system work.  An  explanation
+     of  the key global data structures used by the VM system along with an
+     analysis of the source code should be sufficient to understand the in‐
+     ternal operation of the VM system.
 
 
-          The Virtual Memory (VM) system consists of three  relatively  in-
-     dependent subsystems;  Real Memory (RM), Virtual Memory (VM), and Disk
-     Memory (DM).  All global variables (hooks  into  the  data  structures
-     used  throughout  the  VM system) begin with two capital letters which
-     indicate which sub-system the variable is normally associated with.
+     The  Virtual  Memory (VM) system consists of three relatively indepen‐
+     dent subsystems;  Real Memory (RM), Virtual Memory (VM), and Disk Mem‐
+     ory  (DM).   All global variables (hooks into the data structures used
+     throughout the VM system) begin with two capital letters  which  indi‐
+     cate which sub‐system the variable is normally associated with.
 
 
-          The RM sub-system is used to keep track of the real  memory  used
-     by  the  VM  system.    It  performs functions such as requesting real
-     memory from the OS, giving real memory to the VM  sub-system,  keeping
-     track  of  the free list, real memory compaction, and lastly returning
-     real memory to the OS.
+     The RM sub‐system is used to keep track of the real memory used by the
+     VM system.  It performs functions such as requesting real memory  from
+     the  OS, giving real memory to the VM sub‐system, keeping track of the
+     free list, real memory compaction, and lastly returning real memory to
+     the OS.
 
 
-          The main data structure used by the  RM  sub-system  is  a  union
-     called  RMSTRUCT.    This structure is only used for free real memory.
-     All real memory is manipulated in blocks  of  the  size  of  RMSTRUCT,
-     therefore,  any given block of real memory may be thought of as a vec-
-     tor of RMSTRUCT.  The free memory is kept in a standard  linked  list.
-     The  first  RMSTRUCT of any free block is used to keep the linked list
-     information.  When the VM sub-system requests real memory from the  RM
-     sub-system  the RM sub-system passes a pointer to the first element of
-     the vector, therefore, there is no overhead  associated  with  the  RM
-     sub-system.  The VM sub-system has the responsibility of keeping track
-     of the size of the block of real memory.  The ALIGN type  is  used  to
-     force  any  machine dependent byte alignment requirements.  All memory
-     sizes are passed through a macro called RMCHUNK which  rounds  up  the
-     size to a multiple of the size of RMSTRUCT.
+     The  main  data  structure used by the RM sub‐system is a union called
+     RMSTRUCT.  This structure is only used for free real memory.  All real
+     memory  is  manipulated  in blocks of the size of RMSTRUCT, therefore,
+     any given block of real memory may be thought of as a  vector  of  RM‐
+     STRUCT.  The free memory is kept in a standard linked list.  The first
+     RMSTRUCT of any free block is used to keep the  linked  list  informa‐
+     tion.   When  the  VM sub‐system requests real memory from the RM sub‐
+     system the RM sub‐system passes a pointer to the first element of  the
+     vector,  therefore,  there  is no overhead associated with the RM sub‐
+     system.  The VM sub‐system has the responsibility of keeping track  of
+     the size of the block of real memory.  The ALIGN type is used to force
+     any machine dependent byte alignment requirements.  All  memory  sizes
+     are  passed through a macro called RMCHUNK which rounds up the size to
+     a multiple of the size of RMSTRUCT.
 
 
-          RMfree  is the start of the RM free list.  RMsmem is used to keep
-     a linked list of allocations from the OS.  This  is  needed  when  the
-     memory  is  to  be  returned to the system.  There is an RMSTRUCT size
-     overhead per system memory request associated with this structure.
+     RMfree is the start of the RM free list.  RMsmem is  used  to  keep  a
+     linked list of allocations from the OS.  This is needed when the memo‐
+     ry is to be returned to the system.  There is an RMSTRUCT  size  over‐
+     head per system memory request associated with this structure.
 
 
-          The DM sub-system is used to handle functions related to the swap
+     The  DM  sub‐system  is  used  to handle functions related to the swap
      file.  It creates the swap file, extends the swap file when necessary,
-     swaps real memory in and out of the swap  file,  compresses  the  swap
+     swaps  real  memory  in  and out of the swap file, compresses the swap
      file, and keeps track of all unused areas in the swap file.
 
 
@@ -126,51 +127,50 @@
 
 
 
-
-                                       -2-     Copyright 1988 Blake McBride
-
+                                       ‐2‐     Copyright 1988 Blake McBride
 
 
 
 
-                         _V_i_r_t_u_a_l_ _M_e_m_o_r_y_ _S_y_s_t_e_m_ _I_n_t_e_r_n_a_l_s            _7_/_0_9_/_8_8
+
+                         [4mVirtual[24m [4mMemory[24m [4mSystem[24m [4mInternals[24m            [4m7/09/88[0m
 
 
-          The variable DMflist is used to keep track of all unused areas in
-     the swap file.  The free areas are  stored  in  blocks  of  DHEADSIZE.
-     DMflist  starts  out  as  NULL (indicating no free areas) and when the
-     first free area is created  (by  freeing  an  object  which  had  been
-     previously  paged out) the appropriate structure is allocated from the
-     RM sub-system.  This array is never paged  out,  however,  it  may  be
-     moved by the real memory compactor.  The free areas in DMflist are not
-     kept in any particular order, however, when an area is freed the  sys-
-     tem  will  combine  adjacent areas.  If there are more free areas than
-     will  fit  in  one  DFSTRUCT  then  an  additional  DFSTRUCT  will  be
-     allocated.    This process will continue, and be kept in a linked list
-     pointed to by *next.  The system uses a  best-fit  algorithm  to  find
-     space for a new array.
+
+     The variable DMflist is used to keep track of all unused areas in  the
+     swap file.  The free areas are stored in blocks of DHEADSIZE.  DMflist
+     starts out as NULL (indicating no free areas) and when the first  free
+     area  is created (by freeing an object which had been previously paged
+     out) the appropriate structure is allocated from  the  RM  sub‐system.
+     This  array  is  never paged out, however, it may be moved by the real
+     memory compactor.  The free areas in DMflist are not kept in any  par‐
+     ticular  order, however, when an area is freed the system will combine
+     adjacent areas.  If there are more free areas than will fit in one DF‐
+     STRUCT  then  an  additional DFSTRUCT will be allocated.  This process
+     will continue, and be kept in a linked list pointed to by *next.   The
+     system uses a best‐fit algorithm to find space for a new array.
 
 
-          The  variable  DMnext  is  always the number of bytes in the swap
-     file.  DMnfree keeps a total of the number of unused areas in the swap
-     file.    DMhandle  is the file handle for the swap file, and DMfile is
-     the name of the current swap file.
+     The  variable  DMnext  is always the number of bytes in the swap file.
+     DMnfree keeps a total of the number of unused areas in the swap  file.
+     DMhandle  is the file handle for the swap file, and DMfile is the name
+     of the current swap file.
 
 
-          The VM sub-system ties the RM and DM sub-systems and keeps  track
-     of  what  objects are where.  It performs functions such as requesting
-     real memory for new objects, decides when an object should be paged in
-     and out, and associates an object pointer to the real memory.
+     The VM sub‐system ties the RM and DM sub‐systems and  keeps  track  of
+     what objects are where.  It performs functions such as requesting real
+     memory for new objects, decides when an object should be paged in  and
+     out, and associates an object pointer to the real memory.
 
 
-          Each  object (whether in real memory or swapped out) has a single
+     Each  object  (whether  in  real  memory  or swapped out) has a single
      unique header associated with it.  This header is defined  by  VMHEAD.
-     The  VM sub-system allocates space for VM headers in blocks defined by
-     VMLEGSIZ.  These blocks are allocated as needed through  the  RM  sub-
+     The  VM sub‐system allocates space for VM headers in blocks defined by
+     VMLEGSIZ.  These blocks are allocated as needed through  the  RM  sub‐
      system  but  are  never swapped out, however, they may be moved by the
-     real memory compactor (beware!).  The VM sub-system can handle a  max-
-     imum  of VMBASESIZ blocks, therefore, the VM system can support a max-
-     imum of VMBASESIZ * VMLEGSIZ - 1 objects.  The variable  VMbase  is  a
+     real memory compactor (beware!).  The VM sub‐system can handle a maxi‐
+     mum  of VMBASESIZ blocks, therefore, the VM system can support a maxi‐
+     mum of VMBASESIZ * VMLEGSIZ ‐ 1 objects.  The  variable  VMbase  is  a
      vector  of  pointers  to VM header blocks.  All Virtual Object Handles
      (voh) used external to the VM system are actually indexes into  VMbase
      and  then  through the block pointed to by VMbase.  The union VMPTR is
@@ -179,100 +179,99 @@
      into the header block.
 
 
-          Each VMHEAD is used to fully describe the current status and  at-
+     Each VMHEAD is used to fully  describe  the  current  status  and  at‐
      tributes  of  the associated object.  VMHEAD.type is used to determine
      the current status of the object.  Headers of type MT_NOTUSED are  not
-     currently  being used.  Unused headers are kept on a linked list poin-
-     ted to by VMfree.
+     currently being used.  Unused headers are kept on a linked list point‐
+     ed to by VMfree.
 
 
-          MT_IMEDIATE is used to define  objects  which  are  smaller  than
-     VMHEAD.    These objects are kept right in the remainder of the header
-     (since none of the other elements of VMHEAD  are  needed),  therefore,
-     there  is  no  real  memory allocation necessary, and this object will
-     never be paged out.  However, this object may be  moved  by  the  real
+     MT_IMEDIATE is used to define objects which are smaller  than  VMHEAD.
+     These  objects  are  kept  right in the remainder of the header (since
+     none of the other elements of VMHEAD are needed), therefore, there  is
+     no  real  memory  allocation  necessary, and this object will never be
+     paged out.  However, this object may be moved by the real memory  com‐
 
 
-                                       -3-     Copyright 1988 Blake McBride
+                                       ‐3‐     Copyright 1988 Blake McBride
 
 
 
 
 
-                         _V_i_r_t_u_a_l_ _M_e_m_o_r_y_ _S_y_s_t_e_m_ _I_n_t_e_r_n_a_l_s            _7_/_0_9_/_8_8
+                         [4mVirtual[24m [4mMemory[24m [4mSystem[24m [4mInternals[24m            [4m7/09/88[0m
 
 
-     memory compactor.
+     pactor.
 
 
-          MT_MEMORY  is  used  to  define  active (in real memory) objects.
-     VMHEAD.size is used to indicate the size of the object.  VMHEAD.mem is
-     a  pointer  to  the  object's  real  memory address.  This address may
-     change whenever a real memory compaction  or  a  page  out/in  occurs.
-     VMHEAD.diskadd  is  the disk address on the swap file where the object
-     is located.  Negative one indicates an object  which  has  never  been
+     MT_MEMORY  is  used  to  define  active (in real memory) objects.  VM‐
+     HEAD.size is used to indicate the size of the object.  VMHEAD.mem is a
+     pointer  to the object’s real memory address.  This address may change
+     whenever a real memory  compaction  or  a  page  out/in  occurs.   VM‐
+     HEAD.diskadd  is the disk address on the swap file where the object is
+     located.  Negative one  indicates  an  object  which  has  never  been
      swapped out.
 
 
-          MT_DISK  is  normally  used  to indicate objects which are not in
-     real memory but are in the swap file.   VMHEAD.diskadd  will  normally
-     give  the location in the swap file where the object resides, however,
-     if VMHEAD.diskadd is negative one that indicates that the  object  was
-     never  used  (MT_DIRTY)  and  therefore when it was paged out all that
-     happened was that the real memory was freed.  The next time the object
-     is    de-refferenced    new    real    memory   will   be   allocated.
+     MT_DISK  is  normally  used  to indicate objects which are not in real
+     memory but are in the swap file.  VMHEAD.diskadd  will  normally  give
+     the  location  in  the swap file where the object resides, however, if
+     VMHEAD.diskadd is negative one that indicates that the object was nev‐
+     er  used  (MT_DIRTY) and therefore when it was paged out all that hap‐
+     pened was that the real memory was freed.  The next time the object is
+     de‐refferenced new real memory will be allocated.
 
 
-          MT_DIRTY  is  used  in  conjunction  (logical  ORed)   with   the
-     previously  discussed  memory types.  This bit is set on MT_MEMORY ob-
-     jects when the user (programmer) calls VM_addr  with  the  dirty  flag
-     set.   This is used to indicated that he will be changing the contents
-     of the object.  When swapping out occurs on an object which is NOT set
-     to  MT_DIRTY  it  is not written to disk, and when swapped back in the
-     old copy of the object pointed to by VMHEAD.diskadd is read  in.    If
-     there  was  no  old copy written then new real memory is allocated but
-     not initialized.  When swapping out of  an  object  which  is  set  to
-     MT_DIRTY,  then if the object had been written out before then it will
-     be re-written in the same place on the swap file,  otherwise  a  place
-     will  be  found.    After an object is swapped out the real memory as-
-     sociated with the object is returned to the RM sub-system.
+     MT_DIRTY  is  used  in  conjunction (logical ORed) with the previously
+     discussed memory types.  This bit is set on MT_MEMORY objects when the
+     user (programmer) calls VM_addr with the dirty flag set.  This is used
+     to indicated that he will be changing  the  contents  of  the  object.
+     When  swapping out occurs on an object which is NOT set to MT_DIRTY it
+     is not written to disk, and when swapped back in the old copy  of  the
+     object  pointed  to by VMHEAD.diskadd is read in.  If there was no old
+     copy written then new real memory is allocated  but  not  initialized.
+     When  swapping  out of an object which is set to MT_DIRTY, then if the
+     object had been written out before then it will be re‐written  in  the
+     same  place  on the swap file, otherwise a place will be found.  After
+     an object is swapped out the real memory associated with the object is
+     returned to the RM sub‐system.
 
 
-          MT_FREEZE is also used in conjunction  (logical  ORed)  with  the
-     other  memory  types.    This  bit is used to signify a MT_IMEDIATE or
-     MT_MEMORY object which may not be moved  by  either  the  real  memory
-     compactor  or  the  swapper.    This  bit  is  set  and  reset  by the
-     programmer's use of VM_addr().  Variable  VMnifrez  is  used  to  keep
-     track of the number of MT_IMEDIATE objects that are frozen.  When this
-     variable is non-zero no VM header blocks will be effected by the  real
-     memory  compactor  in  order  to  retain  the viability of the objects
-     address.  MT_MEMORY objects which are frozen will  be  taken  off  the
-     least  recently  used  (lru) chain and will therefore never be swapped
-     out.
+     MT_FREEZE  is  also  used in conjunction (logical ORed) with the other
+     memory types.  This bit is used to signify a MT_IMEDIATE or  MT_MEMORY
+     object  which  may not be moved by either the real memory compactor or
+     the swapper.  This bit is set and reset by  the  programmer’s  use  of
+     VM_addr().   Variable  VMnifrez is used to keep track of the number of
+     MT_IMEDIATE objects that are frozen.  When this variable  is  non‐zero
+     no  VM  header blocks will be effected by the real memory compactor in
+     order to retain the viability of the objects address.   MT_MEMORY  ob‐
+     jects which are frozen will be taken off the least recently used (lru)
+     chain and will therefore never be swapped out.
 
 
-          All MT_MEMORY objects which are  not  MT_FREEZE  are  kept  on  a
-     double  linked  list  to facilitate a least recently used (lru) scheme
-     for swapping purposes.  VMHEAD.mru_link and VMHEAD.lru_link  are  used
-     to create the double linked list.  The head of the list (most recently
-     used) is pointed to by VMmru.  The tail of the  list  (least  recently
-     used)  is  pointed  to by VMlru.  Whenever a new object is created, an
+     All MT_MEMORY objects which are not MT_FREEZE are  kept  on  a  double
+     linked list to facilitate a least recently used (lru) scheme for swap‐
+     ping purposes.  VMHEAD.mru_link and VMHEAD.lru_link are used to create
+     the  double linked list.  The head of the list (most recently used) is
+     pointed to by VMmru.  The tail of the list (least  recently  used)  is
+     pointed  to  by  VMlru.  Whenever a new object is created, an existing
+     object paged in, or an object un‐frozen it is put at the head  of  the
 
 
-                                       -4-     Copyright 1988 Blake McBride
+                                       ‐4‐     Copyright 1988 Blake McBride
 
 
 
 
 
-                         _V_i_r_t_u_a_l_ _M_e_m_o_r_y_ _S_y_s_t_e_m_ _I_n_t_e_r_n_a_l_s            _7_/_0_9_/_8_8
+                         [4mVirtual[24m [4mMemory[24m [4mSystem[24m [4mInternals[24m            [4m7/09/88[0m
 
 
-     existing object paged in, or an object un-frozen it is put at the head
-     of  the  list.    Whenever an object is accessed (via VM_addr()) it is
-     taken out of the linked list and put at the head.  Whenever there is a
-     lack  of  real  memory the objects at the tail are paged out until the
-     real memory requirements are met.
+     list.   Whenever an object is accessed (via VM_addr()) it is taken out
+     of the linked list and put at the head.  Whenever there is a  lack  of
+     real memory the objects at the tail are paged out until the real memo‐
+     ry requirements are met.
 
 
 
@@ -325,6 +324,7 @@
 
 
 
-                                       -5-     Copyright 1988 Blake McBride
+
+                                       ‐5‐     Copyright 1988 Blake McBride
 
 
