@@ -1,0 +1,1056 @@
+
+
+                       VIRTUAL MEMORY SYSTEM DOCUMENTATION          3/30/91
+                       -----------------------------------                 
+
+
+
+
+
+
+
+
+
+
+     The Virtual Memory Management System and associated documentation is:
+
+
+
+                     Copyright (c) 1988 Blake McBride (blake@mcbride.name)
+                     4535 Scenig Hills Lane  
+                     Franklin, TN  37064
+
+                     ALL RIGHTS RESERVED.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -1-     Copyright 1988 Blake McBride
+
+
+
+
+                       VIRTUAL MEMORY SYSTEM DOCUMENTATION          3/30/91
+                       -----------------------------------                 
+
+
+     This document describes  a  set  of  general  purpose  virtual  memory
+     management  functions.    The  functions operate similar to the malloc
+     functions in that the programmer requests, uses and  frees  blocks  of
+     memory.    However,  the  virtual  memory  system (VM) has several ad-
+     vantages over the standard malloc functions, and has some  differences
+     in usage.
+
+     The VM system allows the program to request more memory than exists in
+     the machine.  It accomplishes this by keeping some memory  in  a  swap
+     file  utilizing  a least recently used scheme.  One limitation however
+     is that there must be enough real memory on the machine  to  allow  at
+     least  one  (the  largest)  allocated block of virtual memory to be in
+     real memory.  All the swapping is totally transparent to  the  program
+     using the memory.
+
+     In  addition,  the VM system automatically compresses real memory when
+     necessary.  This serves to minimize real memory fragmentation.    When
+     the  VM  system  allocates real memory from the system a few bytes be-
+     tween otherwise consecutive blocks is take up by the  system's  memory
+     allocation   scheme.      This  gap  causes  unavoidable  real  memory
+     fragmentation.  It is therefore strongly recommended to configure  the
+     VM  system  to  allocate  as  few  and  as large real memory blocks as
+     possible.  If a single large block is allocated there will be no  real
+     memory  fragmentation.  This can be achieved via the rmmax and rmasize
+     parameters of the VM_parm function.  Unused space on the swap file  is
+     reused,  and swap file compression is either automatically or manually
+     evoked (it's not too fast).
+
+     All the functions have been designed with portability  (MS-DOS,  UNIX,
+     OS/2) in mind.  It has been tested using MicroSoft C 4.0 and 5.1 Large
+     memory model, Turbo C++ 1.0, Borland C++ 2.0 under  MS-DOS,  and  UNIX
+     system V release 3 using the GNU C Compiler 1.39.
+
+     The  VM system operates on an indirect pointer system, therefore, when
+     an allocation is performed a handle is returned.  This handle is  then
+     de-referenced when the memory is to be accessed.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -2-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_addr                                      De-reference a VM pointer
+
+
+          mp = VM_addr(voh, dirty, ff)
+
+          VMPTR_TYPE      voh;    /*  virtual object handle       */
+          int             dirty;  /*  memory modified flag        */
+          int             ff;     /*  freeze flag                 */
+          char far        *mp;    /*  real memory pointer         */
+
+
+
+     This  function  is  used  to translate a VM pointer to the real memory
+     pointer.  voh is the number returned by VM_alloc().  dirty should be 0
+     if  you  are not going to change the contents of the memory and a 1 if
+     you are.  This is used to determine whether the swap file will need to
+     be updated or not.
+
+     ff  is  a  flag  which tells the VM system to freeze an object in real
+     memory at a constant location.  Normally (ff=0) the  address  returned
+     by  VM_addr()  is only guaranteed until another VM function is called.
+     Any time another VM function is called any objects  may  be  moved  or
+     relocated  to  disk.  If access to several VM objects at the same time
+     is desired they must all be frozen until the operation  is  completed.
+     To free a frozen object call VM_addr() with an ff flag of 0.
+
+     mp  is  a pointer to the actual memory.  mp will be NULL if voh is in-
+     valid or there is not enough real memory to support the array (usually
+     due to too many arrays frozen in real memory).
+
+
+     See also:  VM_alloc, VM_free
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -3-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_alloc                                            Allocate VM memory
+
+
+          voh = VM_alloc(s, c)
+
+          long            s;      /*  size of VM memory   */
+          int             c;      /*  clear memory flag   */
+          VMPTR_TYPE      voh;    /*  VM object handle    */
+
+
+
+     This  function  is  used to allocate VM objects.  If the VM system has
+     not already been initialized (via VM_init)  VM_alloc  will  initialize
+     it.   s is the size in bytes for the memory request (it must be long).
+     c is a flag indicating whether memory should be cleared.   A  1  indi-
+     cates  that  the  memory  should be all set to '\0'.  A 0 indicates no
+     memory initialization.  voh is the handle used by  the  VM  system  to
+     refer  to  the allocated object.  If voh is 0 the VM system was unable
+     to allocate the object.
+
+
+     See also:  VM_realloc, VM_addr, VM_free, VM_end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -4-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_dcmps                                            Compress swap file
+
+
+          void    VM_dcmps()
+
+
+
+     This function is used to manually initiate  compression  of  the  swap
+     file.  The compression method may be selected with VM_parm().
+
+
+     See also:  VM_parm, VM_stat
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -5-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_dump                                     Dump contents of VM system
+
+
+          r = VM_dump(file)
+
+          char    *file;  /*  disk file to dump to        */
+          int     r;      /*  result                      */
+
+
+
+     This  function is used to dump the entire contents of the VM system to
+     disk for later restoration.  Upon restoration the same VM handles will
+     be  in effect and the system may continue as if nothing ever happened.
+     VM_dump() does  not  effect  the  current  state  of  the  VM  system,
+     therefore, normal operation may proceed immediately after a VM_dump().
+
+     file is the name of the file to dump to.  If it already exists it will
+     be  overwritten.    r  is  the result of the operation.  0 indicates a
+     successful dump.  1 indicates the dump file could not be created,  and
+     2 indicates a write error (probably a disk full).
+
+
+     See also:  VM_rest, VM_frest, VM_end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -6-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_end                                             Free all VM objects
+
+
+          void    VM_end()
+
+
+
+     This function is used to free all VM objects and delete the swap file.
+     After VM_end() new objects may be  immediately  allocated.    VM_end()
+     does not return the real memory to the system (see VM_fcore()).
+
+
+     See also:  VM_fcore, VM_free
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -7-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_fcore                                                     Free core
+
+
+          void    VM_fcore()
+
+
+
+     This function is used to free all VM objects, delete the swap file and
+     return all real memory to the system.  This  function  calls  VM_end()
+     but may also be used after VM_end() has already been called.
+
+
+     See also:  VM_end, VM_free
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -8-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_free                                                 Free an object
+
+
+          void    VM_free(voh)
+
+          VMPTR_TYPE      voh;    /*  VM object handle    */
+
+
+
+     This function is used to free a VM object.  voh is a handle which must
+     have been returned from VM_alloc().
+
+
+     See also:  VM_alloc, VM_end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                       -9-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_frest                                                  Fast restore
+
+
+          r = VM_frest(f)
+
+          char    *f;     /*  file name           */
+          int     r;      /*  result of restore   */
+
+
+
+     This function is used to restore a previously stored (with  VM_dump())
+     memory state.  Regardless of the current VM system state (whether it's
+     active or not, whether  any  other  objects  are  allocated  or  not).
+     VM_frest  will restore the entire environment as it was when VM_dump()
+     was called.  Thus all the handles that where active at the time of the
+     VM_dump()  will  now refer to the same objects.  Any objects allocated
+     before VM_frest is called will be freed.
+
+     f is the name of the file  that  was  used  in  a  previous  VM_dump()
+     command.    r  is the result of the operation.  A 0 indicates that the
+     operation was successful, 1 indicates that file f could not be opened,
+     2  indicates  a  file  file  read  error, and 3 means a lack of memory
+     error.  If VM_frest() fails it will leave the VM system active with no
+     objects.
+
+     The  difference  between  VM_rest()  and VM_frest() is that VM_frest()
+     only reads in the objects from the file as  they  are  needed  and  is
+     therefore  MUCH  faster.   VM_rest() reads in the entire dump file and
+     creates a new swap file.  The only disadvantage of VM_frest() is  that
+     it  uses  file f as a swap file and therefore makes file f unusable by
+     VM_rest() or VM_frest() in the future.  A new VM_dump() would have  to
+     be  issued  to  create  another file which could be restored.  Another
+     possibility is to copy the dump file before restoring it.
+
+
+     See also:  VM_dump, VM_rest
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      -10-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_init                                       VM system initialization
+
+
+          r = VM_init()
+
+          int     r;      /*  result of operation */
+
+
+
+     This function is used to create the swap file and initialize  all  the
+     data  structures  used  by the VM system.  Normally this function need
+     not be called because if any of the other VM functions are called  the
+     will  detect the fact that VM_init() was not called and they will call
+     it.  One instance where one might want to explicitly call VM_init() is
+     to  reserve  a  file handle for the VM system before other parts of an
+     application use all the available handles.
+
+     r is 0 on success, a 1 indicates a problem with mktemp(), and a 2  in-
+     dicates unable to create file (no file pointers?).
+
+
+     See also:  VM_end, VM_fcore
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      -11-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_parm                                       Set VM system parameters
+
+
+          void    VM_parm(rmmax, rmasize, rmcompf, dmmfree, dmmfblks, dmctype)
+
+          long    rmmax;          /*  real memory maximum                 */
+          long    rmasize;        /*  real memory minimum allocation size */
+          double  rmcompf;        /*  real memory compression factor      */
+          long    dmmfree;        /*  disk memory maximum free            */
+          int     dmmfblks;       /*  disk memory maximum free blocks     */
+          int     dmctype;        /*  disk memory compression type        */
+
+
+
+     This  function  is  used to set various parameters to fine tune the VM
+     system to an applications needs.  All the parameters are greater  than
+     or  equal  to  zero.    Any  parameter which is -1 will be ignored and
+     whatever value was in effect before  will  remain.    Therefore,  only
+     those  parameters  which need to be changed may be done so without ef-
+     fecting the others.  All the parameters have reasonable default values
+     upon  system  startup.  Any values changed will remain in effect (even
+     through calls to VM_end, VM_fcore and VM_init) until another  call  to
+     VM_parm() is made.
+
+     rmmax  is the maximum amount of memory the VM system will request from
+     the system.  After rmmax memory has been requested from the system (or
+     the  system runs out of memory) the VM system will perform memory com-
+     pactions or swapping to satisfy memory needs.  If this number is 0 the
+     VM  system  will  keep requesting memory from the OS (as needed) until
+     there is no more.
+
+     rmasize is the minimum size of memory the VM will request of the OS.
+
+     rmcompf is the real memory compaction factor.  This number is used  to
+     determine when a memory compaction will take place.  If sz is the size
+     of a memory block needed, and fm is the number of real bytes  free  in
+     the  VM  system,  and  there  is no single block at least sz long then
+     memory compaction will be performed if fm is  greater  than  sz  times
+     rmcompf.
+
+     dmmfree  is  one of the two ways used to determine when automatic swap
+     file compression will occur.  If dmmfree is non-zero and the number of
+     free bytes in the swap file exceeds dmmfree swap file compression will
+     take place.
+
+     dmmfblks is another  method  used  to  initiate  automatic  swap  file
+     compaction.  The VM system keeps track of the number of free blocks in
+     the swap file.  If dmmfblks is non-zero and the number of free  blocks
+     exceeds dmmfblks, swap file compaction will be initiated.
+
+     dmctype  is  used  to specify the type of swap file compression to use
+     when and if it's used.  0  indicates  method  zero,  and  1  indicates
+     method  one.    Method  zero indicates single file, in-place swap file
+     compaction.  With this option the swap file is compressed  by  reading
+     and  writing  to  the swap file only.  All the free areas are combined
+
+
+                                      -12-     Copyright 1988 Blake McBride
+
+
+
+
+                       VIRTUAL MEMORY SYSTEM DOCUMENTATION          3/30/91
+                       -----------------------------------                 
+
+
+     and moved to the end of the swap file.
+
+     Method 1 indicates a 2 file swap file compaction.  This routine copies
+     the  active  regions  to a new file and them deletes the original swap
+     file.  Method 1 requires more disk space to perform the compaction but
+     leaves  a smaller file in the end.  Your individual needs will dictate
+     the most appropriate method to use.
+
+
+     See also:  VM_stat
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      -13-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_realloc                                          Reallocate storage
+
+
+          rvoh = VM_realloc(ivoh, siz)
+
+          VMPTR_TYP       ivoh;   /* VM object handle to change   */
+          long            siz;    /* new size of object           */
+          VMPTR_TYP       rvoh;   /* resultant VM object handle   */
+
+
+
+     This function is used to change the size of an already existing object
+     in  a  manner similar to realloc().  ivoh is the original VM handle of
+     the object.  siz is the new object size.  rvoh is the VM object handle
+     of  the  new  re-sized  object.   rvoh is 0 on error and ivoh is still
+     valid.   If ivoh was frozen it will be freed.
+
+
+     See also:  VM_alloc, VM_free
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      -14-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_rest                                                     VM Restore
+
+
+          r = VM_rest(f)
+
+          char    *f;     /*  file name           */
+          int     r;      /*  result of restore   */
+
+
+
+     This function is used to restore a previously stored (with  VM_dump())
+     memory state.  Regardless of the current VM system state (whether it's
+     active or not, whether  any  other  objects  are  allocated  or  not).
+     VM_rest  will  restore the entire environment as it was when VM_dump()
+     was called.  Thus all the handles that where active at the time of the
+     VM_dump()  will  now refer to the same objects.  Any objects allocated
+     before VM_rest is called will be freed.
+
+     f is the name of the file  that  was  used  in  a  previous  VM_dump()
+     command.    r  is the result of the operation.  A 0 indicates that the
+     operation was successful, 1 indicates that file f could not be opened,
+     2  indicates  a  file  file  read  error, and 3 means a lack of memory
+     error.  If VM_rest() fails it will leave the VM system active with  no
+     objects.
+
+     The  difference  between  VM_rest()  and VM_frest() is that VM_frest()
+     only reads in the objects from the file as  they  are  needed  and  is
+     therefore  MUCH  faster.   VM_rest() reads in the entire dump file and
+     creates a new swap file.  The only disadvantage of VM_frest() is  that
+     it  uses  file f as a swap file and therefore makes file f unusable by
+     VM_rest() or VM_frest() in the future.  A new VM_dump() would have  to
+     be  issued  to  create  another file which could be restored.  Another
+     possibility is to copy the dump file before restoring it.
+
+
+     See also:  VM_dump, VM_frest
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                                      -15-     Copyright 1988 Blake McBride
+
+
+
+
+                       VVIIRRTTUUAALL  MMEEMMOORRYY  SSYYSSTTEEMM  DDOOCCUUMMEENNTTAATTIIOONN          33//3300//9911
+                       -----------------------------------                 
+
+
+     VM_stat                                               VM System Status
+
+
+          long    *VM_stat()
+
+
+
+
+     This function is used to obtain various information  relating  to  the
+     current  status of the VM system.  VM_stat() returns a pointer to a 16
+     element long type vector.  The following is a list of the elements:
+
+
+
+           0  =  Total real memory allocated
+           1  =  Real memory allocated but not currently being used
+           2  =  Maximum real memory which the VM system may request
+           3  =  Minimum real memory request size
+           4  =  Number of real memory compactions
+           5  =  Number of VM allocations in real memory
+           6  =  Number of VM allocations on disk
+           7  =  Total VM allocated
+           8  =  Number of frozen objects
+           9  =  Size of swap file
+          10  =  Number of unused bytes on swap file
+          11  =  Max free bytes on swap file before auto swap file compaction
+          12  =  Swap file compaction type
+          13  =  Number of swap file compactions which have occurred
+          14  =  Number of free blocks on swap file
+          15  =  Max number of free blocks in swap file before auto compaction
+
+
+
+     The swap file compaction type is a flag with the following meaning.  0
+     indicates  single  file, in-place swap file compaction.  With this op-
+     tion the swap file is compressed by reading and writing  to  the  swap
+     file  only.    All the free areas are combined and moved to the end of
+     the swap file.
+
+     Option 1 indicates a 2 file swap file compaction.  This routine copies
+     the  active  regions  to a new file and them deletes the original swap
+     file.  This option requires more disk space to perform the  compaction
+     but  leaves  a  smaller  file  in the end.  Your individual needs will
+     dictate the most appropriate method to use.
+
+
+     See also:  VM_parm
+
+
+
+
+
+
+
+
+
+
+                                      -16-     Copyright 1988 Blake McBride
+
+
