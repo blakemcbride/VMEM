@@ -1,13 +1,13 @@
 
 This package (VMEM) is Copyright 1988 Blake McBride (blake@mcbride.name)
-Please see the "copyrite" file for full information.
+Please see the "License.txt" file for full information.
 
 
 This is a virtual memory system I wrote a number of years ago.  I used to
-sell it and it works bug free as far as I know.  Unfortunatly, it's written
-in K&R C instead of ANSI.  It should work fine, though, if you turn compiler
-warnings off.  Converting this to ANSI C shouldn't be that hard - one day
-max.
+sell it and it works bug free as far as I know.  It was written and tested
+in old K&R C instead of ANSI.  It has now been updated but not re-tested.
+Also, now new, 64 bit machines are out.  The system has not been tested 
+with 64 bit compilers.
 
 VMEM is written in C and comes with a complete user and internals manual.
 
@@ -25,35 +25,3 @@ VMEM.SYS	Internals documentation source
 SEGMEM.TXT	Some test results using segmented memory on 80x86
 MAC		nroff macros to produce documentation
 
-
-
-See:  http://algorithms.us
-for information on our Dynace Object Oriented Extension to C
-and our Dynace Windows Development System
-
-A short discription of the Dynace products follows:
-
-
-Dynace Object Oriented Extension To C (Dynace)
-----------------------------------------------------------------------
-Dynace is a preprocessor, include files and a library which extends 
-the C language with advanced object oriented capabilities, automatic 
-garbage collection and multiple threads.  Dynace is designed to solve
-many of the problems associated with C++ while being easier to learn
-and containing more flexable object oriented facilities.  Dynace is
-able to add facilities previously only available in languages such
-as Smalltalk and CLOS without all the overhead normally associated
-with those environments.
-
-
-
-Dynace Windows Development System (WDS)
-----------------------------------------------------------------------
-The Dynace Windows Development System (WDS) is a Dynace class library 
-which enables a C programmer with no knowledge of C++, Dynace, the 
-Windows API or message-driven architecture to write real Windows 
-applications with an absolute minimum learning curve and number of 
-lines of code.  In fact, it is possible to become familiar enough with 
-windows, menus, dialogs and controls using WDS to write a Windows 
-application after just one day!  A "Hello World" program takes only 
-four lines of code!
