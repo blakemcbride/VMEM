@@ -140,6 +140,7 @@
 #include <io.h>
 #else
 #define	O_BINARY	0
+#include <stdlib.h>
 #endif
 #include <fcntl.h>
 #include <sys/types.h>
@@ -148,12 +149,8 @@
 
 /*  #define DEBUG	*/
 
-/* #define  USE_MALLOC */	/*  Force malloc instead of huge alloc
+#define  USE_MALLOC 	/*  Force malloc instead of huge alloc
 				   function */
-
-#if !defined(__TURBOC__)  &&  !defined(_MSC_VER)
-#define	USE_MALLOC
-#endif
 
 #ifndef OPEN
 #define OPEN		open
@@ -169,13 +166,7 @@
 #define NO_ALLOCA 1024
 #endif
 
-#ifdef	unix
-#define	NO_ALLOCA 4096
-#define	NO_ATEXIT
-#define	NO_MEMMOVE
-#endif
-
-#ifdef	_MSC_VER
+#if	defined(_MSC_VER)  &&  0
 
 #define	HPtoL(p)  (((unsigned long)FP_SEG(p)<<4) + (unsigned long)FP_OFF(p))
 static	char HUGE   *HPtoFP();	/*  don't use this with OS/2 (use the #else)  */
@@ -420,12 +411,6 @@ static	int	morecore(MAX_SIZ_TYP s)
 {
 	RMHEAD_PTR	p;
 	unsigned long	n;
-#if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
-	char HUGE *farmalloc();
-#endif
-#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
-	char HUGE *halloc();
-#endif
 	FNAME(morecore);
 
 	s += RMCHUNK(sizeof(RMHEAD));	/* allow room for system pointer	*/
@@ -437,15 +422,7 @@ static	int	morecore(MAX_SIZ_TYP s)
 #endif
 	if (RMmax  &&  RMtotal + n > RMmax)
 		return(1);
-#if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
-	p = (RMHEAD_PTR) farmalloc(n);
-#else
-#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
-	p = (RMHEAD_PTR) halloc(n, 1);
-#else
 	p = (RMHEAD_PTR) malloc((unsigned) n);
-#endif
-#endif
 	if (!p)
 		return(1);
 	RMtotal	 += n;
@@ -463,15 +440,7 @@ void	VM_fcore(void)
 	VM_end();
 	for (p=RMsmem ;	p ; p=n)  {
 		n = p->s.next;
-#if defined(__TURBOC__)  &&  !defined(USE_MALLOC)
-		farfree((char HUGE *) p);
-#else
-#if defined(_MSC_VER)  &&  !defined(USE_MALLOC)
-		hfree((char HUGE *) p);
-#else
 		free((char *) p);
-#endif
-#endif
 	}
 	RMsmem	= NULL;
 	RMnfree	= 0L;
@@ -510,12 +479,7 @@ static	void	rmfree(RMHEAD_PTR h, MAX_SIZ_TYP n)
 	for (f=RMfree ;	f->s.next ; f=f->s.next)
 		if (LT(f, h)  &&  LT(h, f->s.next))
 			break;
-#ifdef	_MSC_VER	    /*	for some reason	MSC-4.0	won't compile without t  */
-	t = f +	(f->s.size / (long) sizeof(RMHEAD));
-	if (EQ(t, h))
-#else
 	if (EQ(f + f->s.size / (long) sizeof(RMHEAD), h))
-#endif
 		f->s.size += h->s.size;
 	else  {
 		h->s.next = f->s.next;
@@ -786,7 +750,7 @@ void	VM_free(VMPTR_TYPE i)
 
 	/* this	must be	redone because free_disk calls dfree_new, rmalloc, compact so the address may change  */
 
-	h = (VMHEAD HUGE	*) &VMbase[p.p.b][p.p.l];
+	h = (VMHEAD HUGE *) &VMbase[p.p.b][p.p.l];
 
 	if (h->type & MT_FREEZE)
 		VMnfreez--;
@@ -1496,7 +1460,7 @@ int	VM_frest(char *f)
 	register int	i, b;
 	int	h, s = (sizeof(VMHEAD) * VMLEGSIZ);
 	VMHEAD	HUGE	*v;
-	long	da, tell();
+	long	da;
 	FNAME(VM_frest);
 
 	TEST(fun, 0);
@@ -1523,7 +1487,7 @@ int	VM_frest(char *f)
 			return(2);
 		}
 	}
-	da = tell(h);
+	da = lseek(h, 0L, SEEK_CUR);
 	dfree_new();
 	DMflist->diskaddr[0] = 0L;
 	DMnfree	= DMflist->nfree[0] = da;

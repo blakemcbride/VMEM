@@ -7,8 +7,9 @@
 
 #ifndef _MSC_VER
 #define HUGE
+#include <stdlib.h>
 #else
-#define HUGE huge
+#define HUGE
 #endif
 
 static void tsterr(char *m);
@@ -113,4 +114,3 @@ static void tsterr(char *m)
 	exit(1);
 }
 
-
