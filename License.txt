@@ -10,7 +10,7 @@ This system (VMEM) is:
 	USA
 
 
-	blake@mcbride.name
+	blake@mcbridemail.com
 
 
 This package is open source and may be used for any purpose so long as
