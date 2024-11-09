@@ -6,5 +6,8 @@ Vmem is a C library that allows your C program to allocate and use more memory t
 
 The system also has some nice dump and restore facilities.
 
-
 Please see the accompanying readme file for more details.
+
+This code was written by Blake McBride
+
+Source code available at:  [https://github.com/blakemcbride/VMEM](https://github.com/blakemcbride/VMEM)
