@@ -7,10 +7,8 @@
 
 
 #ifndef _MSC_VER
-#define HUGE
 #include <stdlib.h>
 #else
-#define HUGE
 #endif
 
 static void tsterr(char *m);
@@ -26,7 +24,7 @@ int main(int argc, char *argv[])
 	register long	 j;
 	register unsigned char	c;
 	int	i, max = 0, n, mpass, nfrez = 0;
-	unsigned char	HUGE *p;
+	unsigned char	 *p;
 
 	if (argc > 1) {
 		max = atoi(argv[1]);

@@ -20,9 +20,6 @@ typedef	unsigned char	BASE_TYPE;
 typedef	unsigned short	VMPTR_TYPE;   /*  large	enough to hold LEG_TYPE	and BASE_TYPE  */
 
 
-#define	HUGE
-
-
 extern int	VM_newadd;			/* set to 1 when memory changed	*/
 
 int		VM_init(void);
