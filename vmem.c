@@ -139,6 +139,10 @@
 #ifdef _MSC_VER
 #include <dos.h>
 #include <io.h>
+#include <malloc.h>
+#define mkstemp my_mkstemp
+#define ftruncate my_ftruncate
+#define fchmod my_fchmod
 #else
 #define	O_BINARY	0
 #include <stdlib.h>
@@ -147,6 +151,7 @@
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <string.h>
 
 
 /*  #define DEBUG	*/
@@ -1080,7 +1085,6 @@ static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf)
 static	int	make_swap(void)
 {
 	char	*p, *getenv();
-	int	fd;
 	FNAME(make_swap);
 
 	if (p =	getenv("VMPATH"))  {
@@ -1094,11 +1098,10 @@ static	int	make_swap(void)
 	DMhandle = mkstemp(DMfile);
 	if (DMhandle ==	-1)
 		return(2);
-#if defined(_WIN32) || defined(_WIN64)
-	setmode(fd, O_BINARY);
+#ifndef _MSC_VER
+	ftruncate(DMhandle, 0);
+	fchmod(DMhandle, S_IREAD | S_IWRITE);
 #endif
-	ftruncate(fd, 0);
-	fchmod(fd, S_IREAD | S_IWRITE);
 	return(0);
 }
 
@@ -1580,7 +1583,7 @@ static	long	longwrite(int fh, char HUGE *buf, long n)
 	return tot;
 }
 
-#ifdef	_MSC_VER
+#if	defined(_MSC_VER) && 0
 
 /*
     This function should not be	used in	OS/2 because you can't just use any
@@ -1861,6 +1864,16 @@ static char	*memmove(char HUGE *t, char HUGE *f, unsigned n)
 			*t-- = *f--;
 	}
 	return(r);
+}
+
+#endif
+
+#ifdef _MSC_VER
+
+static int my_mkstemp(char *template) {
+	if (_mktemp_s(template, strlen(template) + 1) != 0)
+		return -1;
+	return _open(template, _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY | _O_TRUNC | _S_IREAD | _S_IWRITE);
 }
 
 #endif
