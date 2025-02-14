@@ -5,9 +5,6 @@
  *
  *
  *	       Blake McBride
- *	       4535 Scenic Hills Drive
- *	       Franklin,  TN  37067
- *
  *             blake@mcbridemail.com
  *
  *
@@ -122,6 +119,10 @@
  *		Version 4.0 - 1/22/14
  *
  *			Updated system for ANSI C
+ *
+ *		Version 4.1 - 2/13/25
+ *
+ *			Modernized the code
 */
 
 #include <stdlib.h>
@@ -141,6 +142,7 @@
 #else
 #define	O_BINARY	0
 #include <stdlib.h>
+#include <unistd.h>
 #endif
 #include <fcntl.h>
 #include <sys/types.h>
@@ -598,7 +600,7 @@ VMPTR_TYPE	VM_alloc(long s, int zero)
 	return(p.i);
 }
 
-char	HUGE	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
+void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 {
 	VMPTR	p;
 	VMHEAD	HUGE *h, HUGE *t;
@@ -1077,7 +1079,8 @@ static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf)
 
 static	int	make_swap(void)
 {
-	char	*p, *mktemp(), *getenv();
+	char	*p, *getenv();
+	int	fd;
 	FNAME(make_swap);
 
 	if (p =	getenv("VMPATH"))  {
@@ -1088,11 +1091,14 @@ static	int	make_swap(void)
 	}  else
 		*DMfile	= '\0';
 	strcat(DMfile, "vmXXXXXX");
-	if (!mktemp(DMfile))
-		return(1);
-	DMhandle = OPEN(DMfile, O_CREAT | O_RDWR | O_TRUNC | O_BINARY, S_IREAD | S_IWRITE);
+	DMhandle = mkstemp(DMfile);
 	if (DMhandle ==	-1)
 		return(2);
+#if defined(_WIN32) || defined(_WIN64)
+	setmode(fd, O_BINARY);
+#endif
+	ftruncate(fd, 0);
+	fchmod(fd, S_IREAD | S_IWRITE);
 	return(0);
 }
 

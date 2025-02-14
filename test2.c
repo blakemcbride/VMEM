@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "vmem.h"
 
 #define	MAX_ITEMS	50
 #define	MAX_SIZE	100000L
@@ -25,7 +26,7 @@ int main(int argc, char *argv[])
 	register long	 j;
 	register unsigned char	c;
 	int	i, max = 0, n, mpass, nfrez = 0;
-	unsigned char	HUGE *p, HUGE *VM_addr();
+	unsigned char	HUGE *p;
 
 	if (argc > 1) {
 		max = atoi(argv[1]);

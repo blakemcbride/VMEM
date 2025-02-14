@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <dos.h>
 
 
 #define	HPtoL(p)  (((unsigned long)FP_SEG(p)<<4) + (unsigned long)FP_OFF(p))

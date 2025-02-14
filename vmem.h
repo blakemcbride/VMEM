@@ -32,7 +32,7 @@ void		VM_end(void), VM_dcmps(void);
 long		*VM_stat(void);
 void		VM_parm(long rmmax, long rmasize, double rmcompf, long dmmfree, int dmmfblks, int dmctype);
 void		VM_fcore(void);
-char	HUGE	*VM_addr(VMPTR_TYPE i, int dirty, int frez);
+void		*VM_addr(VMPTR_TYPE i, int dirty, int frez);
 VMPTR_TYPE	VM_realloc(VMPTR_TYPE i, long s);
 int		VM_dump(char *f);
 int		VM_rest(char *f);
