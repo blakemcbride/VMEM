@@ -123,6 +123,12 @@
  *		Version 4.1 - 2/13/25
  *
  *			Modernized the code
+ *
+ *		Version 5.0 - 11/16/25
+ *
+ *			Significantly modernized the code
+ *
+ *			No longer assumes segmented memory
 */
 
 #include <stdlib.h>
@@ -136,6 +142,7 @@
 
 
 #include <stdio.h>
+#include <errno.h>
 #ifdef _MSC_VER
 #include <dos.h>
 #include <io.h>
@@ -151,6 +158,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <string.h>
+
+/* Compatibility for file permissions */
+#ifndef S_IREAD
+#define S_IREAD S_IRUSR
+#endif
+#ifndef S_IWRITE
+#define S_IWRITE S_IWUSR
+#endif
 
 
 //#define DEBUG
@@ -172,7 +187,11 @@ static	void terror(char *f, int n, char *m);
 #define	TEST(f,n)
 #endif
 
+#ifdef DEBUG
 #define FNAME(x)	static char fun[] = #x
+#else
+#define FNAME(x)	/* No-op when not debugging */
+#endif
 
 // Uncomment the following if you do not have alloca
 //#define NO_ALLOCA 1024
@@ -190,29 +209,30 @@ static	void terror(char *f, int n, char *m);
 #define	MT_DIRTY	0x08	/*  object has been modified		*/
 #define	MT_FREEZE	0x10	/*  object frozen in real memory	*/
 
-#define	VMBASESIZ	255
-#define	VMLEGSIZ	255
+/* Linear array configuration */
+#ifdef __LP64__
+  #define	VMINITSIZE	1024     /* Initial allocation of VM headers */
+  #define	VMGROWSIZE	1024     /* Growth increment when more headers needed */
+  #define	VMMAXSIZE	1048576  /* Maximum number of VM objects (1M) */
+#else
+  #define	VMINITSIZE	256      /* Initial allocation for 16-bit systems */
+  #define	VMGROWSIZE	256      /* Growth increment */
+  #define	VMMAXSIZE	65535    /* Maximum for 16-bit index */
+#endif
+
 #define	MAXSALOC	500000L	/*  maximum single object size		*/
 #define	RMCHUNK(x) ((x + sizeof(RMHEAD)	- 1) / sizeof(RMHEAD)) * sizeof(RMHEAD)
 #define	DHEADSIZE	100	/* number of disk free pointers	in core	block */
-#define	IMSIZE		(sizeof(VMbase[0]->mru_link) + sizeof(VMbase[0]->lru_link) + sizeof(VMbase[0]->size) + sizeof(VMbase[0]->mem) +	sizeof(VMbase[0]->diskadd))
+#define	IMSIZE		(sizeof(VMbase[0].mru_link) + sizeof(VMbase[0].lru_link) + sizeof(VMbase[0].size) + sizeof(VMbase[0].mem) +	sizeof(VMbase[0].diskadd))
 #define FILE_BLOCK	16384	/* largest single file block  */
 
 
 typedef	unsigned long	MAX_SIZ_TYP;
 
-typedef	union  {
-	struct	{
-		LEG_TYPE	l;
-		BASE_TYPE	b;
-	}	p;
-	VMPTR_TYPE	i;
-}	VMPTR;
-
 typedef	struct	VMSTRUCT  {
 	char	type;
-	VMPTR	mru_link;
-	VMPTR	lru_link;
+	VMPTR_TYPE	mru_link;
+	VMPTR_TYPE	lru_link;
 	MAX_SIZ_TYP	size;
 	char		*mem;
 	long	diskadd;
@@ -257,11 +277,11 @@ static	DFREE  *dfree_new(void);
 static	void	dfree_free(void);
 static	long	get_la(long la);
 static	VMHEAD   *get_dmem(long da);
-static	void	rest_clean(int lev, int h, int mb, int mi);
-static	void	error(char *f, char *m);
+static	void	error(const char *f, const char *m);
 
-static	long	longwrite(), longread();
-static	char		*rmalloc();
+static	long	longwrite(int fh, char *buf, long n);
+static	long	longread(int fh, char *buf, long n);
+static	char	*rmalloc(MAX_SIZ_TYP n);
 
 static	RMHEAD_PTR  RMfree = NULL;		/* pointer to free real	memory chain  */
 static	RMHEAD_PTR  RMsmem = NULL;		/* keep	track of system	allocations for	future release	*/
@@ -272,10 +292,11 @@ static	long	RMasize	 = RMCHUNK(8000);	/* allocation chunk size	*/
 static	double	RMcompf	 = 2.0;			/* compaction factor	*/
 static	int	RMncomp	 = 0;               /* number of compactions	*/
 
-static	VMHEAD	*VMbase[VMBASESIZ];	/* vm header table	*/
-static	VMPTR	VMfree;				/* head	of free	vm header chain	*/
-static	VMPTR	VMmru;				/* pointer to head of mru chain	*/
-static	VMPTR	VMlru;				/* pointer to tail of mru chain	*/
+static	VMHEAD	*VMbase = NULL;		/* vm header array (linear) */
+static	VMPTR_TYPE VMallocated = 0;	/* number of allocated VM headers */
+static	VMPTR_TYPE VMfree = 0;		/* head	of free	vm header chain	*/
+static	VMPTR_TYPE VMmru = 0;		/* pointer to head of mru chain	*/
+static	VMPTR_TYPE VMlru = 0;		/* pointer to tail of mru chain	*/
 static	VMPTR_TYPE VMlive = 0;			/* number of arrays in real memory	*/
 static	VMPTR_TYPE VMdisk = 0;			/* number of arrays in disk memory	*/
 static	long	VMtotal	= 0L;			/* total allocated virtual space	*/
@@ -359,7 +380,7 @@ static	char		*rmalloc(MAX_SIZ_TYP n)
 				b = h;
 			}
 		}
-		if (!h	&&  !b)
+		if (!h	&&  !b) {
 			if (f  &&  RMcompf  &&	RMnfree	> s * RMcompf)	{
 				f = 0;
 				compact();
@@ -368,6 +389,7 @@ static	char		*rmalloc(MAX_SIZ_TYP n)
 					return NULL;
 				else	f = 1;
 			}  else	   f = 0;
+		}
 	}
 	RMnfree	-= s;
 	if (h)	{
@@ -391,10 +413,10 @@ static	int	makemore(long s)
 {
 	VMHEAD		*h;
 
-	if (DMhandle ==	-1  ||	!VMlru.i)
+	if (DMhandle ==	-1  ||	!VMlru)
 		return(1);
-	while (s > 0L  &&  VMlru.i)  {
-		h = &VMbase[VMlru.p.b][VMlru.p.l];
+	while (s > 0L  &&  VMlru)  {
+		h = &VMbase[VMlru];
 		page_out(h);
 		vm_unlink(h);
 		s -= h->size;
@@ -490,57 +512,88 @@ static	void	rmfree(RMHEAD_PTR h, MAX_SIZ_TYP n)
 static	VMPTR_TYPE	vmget_head(void)
 {
 	VMPTR_TYPE	r;
-	register int	b, i;
-	VMHEAD		*h;
+	VMPTR_TYPE	i, new_size;
+	VMHEAD		*new_base;
 	FNAME(vmget_head);
 
-	if (!VMfree.i)	{
-		for (b=0 ;  b != VMBASESIZ  &&	VMbase[b]  ;  ++b);
-		if (b == VMBASESIZ)
-			return((VMPTR_TYPE) 0);
-		h = VMbase[b] =	(VMHEAD	 *) rmalloc((MAX_SIZ_TYP)(VMLEGSIZ * sizeof(VMHEAD)));
-		if (!VMbase[b])
-			return((VMPTR_TYPE) 0);
-		if (b)
-			i = 0;
-		else  {		/* 0,0 is not used (its	NULL)	*/
-			i = 1;
-			h[0].type	= MT_NOTUSED;
-			h[0].lru_link.i	= 0;
+	/* If no free headers, need to allocate or grow the array */
+	if (!VMfree)	{
+		/* Check if we need initial allocation */
+		if (!VMbase) {
+			VMallocated = VMINITSIZE;
+			VMbase = (VMHEAD *) rmalloc((MAX_SIZ_TYP)(VMallocated * sizeof(VMHEAD)));
+			if (!VMbase) {
+				VMallocated = 0;
+				return((VMPTR_TYPE) 0);
+			}
+			/* Initialize the free list, skip index 0 (NULL) */
+			VMfree = 1;
+			for (i = 1; i < VMallocated - 1; i++) {
+				VMbase[i].type = MT_NOTUSED;
+				VMbase[i].lru_link = i + 1;
+				VMbase[i].diskadd = -1L;
+			}
+			VMbase[i].type = MT_NOTUSED;
+			VMbase[i].lru_link = 0;
+			VMbase[i].diskadd = -1L;
+			/* Mark index 0 as permanently not used */
+			VMbase[0].type = MT_NOTUSED;
+			VMbase[0].lru_link = 0;
 		}
-		VMfree.p.b = b;
-		VMfree.p.l = i;
-		while (i != (VMLEGSIZ-1))  {
-			h[i].type = MT_NOTUSED;
-			h[i].lru_link.p.b = b;
-			h[i].lru_link.p.l = 1 +	i;
-			h[i++].diskadd = -1L;
+		/* Grow the array if needed */
+		else if (VMallocated < VMMAXSIZE) {
+			new_size = VMallocated + VMGROWSIZE;
+			if (new_size > VMMAXSIZE)
+				new_size = VMMAXSIZE;
+
+			/* Note: rmalloc may trigger compact() which can change VMbase */
+			new_base = (VMHEAD *) rmalloc((MAX_SIZ_TYP)(new_size * sizeof(VMHEAD)));
+			if (!new_base)
+				return((VMPTR_TYPE) 0);
+
+			/* Copy existing data */
+			memcpy(new_base, VMbase, VMallocated * sizeof(VMHEAD));
+			rmfree((RMHEAD_PTR)VMbase, (MAX_SIZ_TYP)(VMallocated * sizeof(VMHEAD)));
+			VMbase = new_base;
+
+			/* Initialize new entries and add to free list */
+			VMfree = VMallocated;
+			for (i = VMallocated; i < new_size - 1; i++) {
+				VMbase[i].type = MT_NOTUSED;
+				VMbase[i].lru_link = i + 1;
+				VMbase[i].diskadd = -1L;
+			}
+			VMbase[i].type = MT_NOTUSED;
+			VMbase[i].lru_link = 0;
+			VMbase[i].diskadd = -1L;
+
+			VMallocated = new_size;
 		}
-		h[i].type = MT_NOTUSED;
-		h[i].lru_link.i	= 0;
-		h[i].diskadd = -1L;
+		else {
+			/* Reached maximum capacity */
+			return((VMPTR_TYPE) 0);
+		}
 	}
-	r = VMfree.i;
-	VMfree.i = VMbase[VMfree.p.b][VMfree.p.l].lru_link.i;
+
+	/* Get the next free header */
+	r = VMfree;
+	VMfree = VMbase[VMfree].lru_link;
 	return(r);
 }
 
 static	void	vmfree_head(VMPTR_TYPE i)
 {
-	VMPTR	t;
-
-	t.i = i;
-	VMbase[t.p.b][t.p.l].type	= MT_NOTUSED;
-	VMbase[t.p.b][t.p.l].lru_link.i	= VMfree.i;
-	VMbase[t.p.b][t.p.l].diskadd	= -1L;
-	VMfree.i = i;
+	VMbase[i].type = MT_NOTUSED;
+	VMbase[i].lru_link = VMfree;
+	VMbase[i].diskadd = -1L;
+	VMfree = i;
 }
 
 VMPTR_TYPE	VM_alloc(long s, int zero)
 {
 	VMHEAD		*h;
-	VMPTR	p;
-	register char	 	 *t;
+	VMPTR_TYPE	p;
+	register char	*t;
 	FNAME(VM_alloc);
 
 	TEST(fun, 0);
@@ -548,16 +601,16 @@ VMPTR_TYPE	VM_alloc(long s, int zero)
 	if (s > 65534U)
 		return(0);
 #endif
-	if (s >	MAXSALOC  ||  s < 1L)			
+	if (s >	MAXSALOC  ||  s < 1L)
 		return(0);
-	if (DMhandle ==	-1  &&	VM_init())	
+	if (DMhandle ==	-1  &&	VM_init())
 		return(0);
 	d_compact();
 	TEST(fun, 1);
-	if (!(p.i = vmget_head()))		
+	if (!(p = vmget_head()))
 		return(0);
 	if (s <= IMSIZE)  {
-		h = &VMbase[p.p.b][p.p.l];
+		h = &VMbase[p];
 		h->type = MT_IMEDIATE;
 		VMlive++;
 
@@ -565,21 +618,21 @@ VMPTR_TYPE	VM_alloc(long s, int zero)
 			memset((char  *) &h->mru_link, 0, IMSIZE);
 
 		TEST(fun, 2);
-		return(p.i);
+		return(p);
 	}
 
-/* &VMbase[x][y] cannot	be done	before rmalloc() bacause rmalloc may change the	address	of VMbase[x] during compact()	*/
+/* VMbase can change during rmalloc() due to compact(), so get address after */
 
 	t = rmalloc((MAX_SIZ_TYP) s);
-	h = &VMbase[p.p.b][p.p.l];
+	h = &VMbase[p];
 	h->mem = t;
 	if (!h->mem)  {
-		vmfree_head(p.i);
+		vmfree_head(p);
 		TEST(fun, 3);
 		return(0);
 	}
 	h->type	= MT_MEMORY;
-	vm_link(h, p.i);
+	vm_link(h, p);
 	h->size	   = s;
 	h->diskadd = -1L;
 	VMtotal	  += s;
@@ -592,24 +645,22 @@ VMPTR_TYPE	VM_alloc(long s, int zero)
 		h->type	|= MT_DIRTY;
 	}
 
-	return(p.i);
+	return(p);
 }
 
 void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 {
-	VMPTR	p;
-	VMHEAD	 *h,  *t;
+	VMHEAD	 *h;
 	FNAME(VM_addr);
 
 	TEST(fun, 0);
-	p.i = i;
-	if (!i	||  p.p.b >= VMBASESIZ	||  p.p.l >= VMLEGSIZ  ||  !VMbase[p.p.b])
+	if (!i	||  i >= VMallocated)
 		return NULL;
-	h = (VMHEAD 	*) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 	if (h->type == MT_NOTUSED)
 		return NULL;
 	if (h->type & MT_IMEDIATE)  {
-		if (!frez  !=  !(h->type & MT_FREEZE))
+		if (!frez  !=  !(h->type & MT_FREEZE)) {
 			if (frez) {
 				VMnfreez++;
 				VMnifrez++;
@@ -619,22 +670,23 @@ void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 				VMnifrez--;
 				h->type	&= (~MT_FREEZE);
 			}
+		}
 		TEST(fun, 1);
 		return (char  *) &h->mru_link;
 	}
 	if (h->type & MT_MEMORY)  {
-		if (!(h->type &	MT_FREEZE)  &&	(h->mru_link.i || frez))
+		if (!(h->type &	MT_FREEZE)  &&	(h->mru_link || frez))
 			vm_unlink(h);
-		if (!frez  &&  (h->mru_link.i  ||  h->type & MT_FREEZE))
+		if (!frez  &&  (h->mru_link  ||  h->type & MT_FREEZE))
 			vm_link(h, i);
 	}  else	 {	/*  MT_DISK	*/
 		d_compact();
 
   /*  d_compact	may call d_compact1, dfree_new,	rmalloc, compact and change the	address	 */
 
-		h = (VMHEAD  *) &VMbase[p.p.b][p.p.l];
+		h = &VMbase[i];
 
-		h = page_in(h, p.i);
+		h = page_in(h, i);
 		if (!h)
 			return(NULL);
 		if (!frez)
@@ -643,7 +695,7 @@ void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 	if (dirty)
 		h->type	|= MT_DIRTY;
 
-	if (!frez  !=  !(h->type & MT_FREEZE))
+	if (!frez  !=  !(h->type & MT_FREEZE)) {
 		if (frez)  {
 			VMnfreez++;
 			h->type	|= MT_FREEZE;
@@ -651,6 +703,7 @@ void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 			VMnfreez--;
 			h->type	&= (~MT_FREEZE);
 		}
+	}
 
 	TEST(fun, 2);
 	return (char  *) h->mem;
@@ -658,38 +711,36 @@ void	*VM_addr(VMPTR_TYPE i, int dirty, int frez)
 
 static	void	vm_link(VMHEAD  *h, VMPTR_TYPE i)	/*  add	to head	of lru link	*/
 {
-	h->mru_link.i =	0;
-	if (h->lru_link.i = VMmru.i)
-		VMbase[h->lru_link.p.b][h->lru_link.p.l].mru_link.i = i;
-	VMmru.i	= i;
-	if (!VMlru.i)
-		VMlru.i	= i;
+	h->mru_link = 0;
+	if ((h->lru_link = VMmru))
+		VMbase[h->lru_link].mru_link = i;
+	VMmru = i;
+	if (!VMlru)
+		VMlru = i;
 }
 
 static	void	vm_unlink(VMHEAD  *h)	/*  take out of	lru link	*/
 {
-	if (h->mru_link.i)
-		VMbase[h->mru_link.p.b][h->mru_link.p.l].lru_link.i = h->lru_link.i;
+	if (h->mru_link)
+		VMbase[h->mru_link].lru_link = h->lru_link;
 	else
-		VMmru.i	= h->lru_link.i;
-	if (h->lru_link.i)
-		VMbase[h->lru_link.p.b][h->lru_link.p.l].mru_link.i = h->mru_link.i;
+		VMmru = h->lru_link;
+	if (h->lru_link)
+		VMbase[h->lru_link].mru_link = h->mru_link;
 	else
-		VMlru.i	= h->mru_link.i;
+		VMlru = h->mru_link;
 }
 
 VMPTR_TYPE	VM_realloc(VMPTR_TYPE i, long s)
 {
 	VMPTR_TYPE	n;
 	char  *f, *t;
-	VMPTR	p;
 	VMHEAD	*h;
 
 	f = VM_addr(i, 0, 0);
 	if (!f)
 		return(0);
-	p.i = i;
-	h = (VMHEAD 	*) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 	if (h->type & MT_IMEDIATE  &&  s <= IMSIZE)
 		return(i);
 	if (h->type & MT_MEMORY	 &&  s == h->size)
@@ -701,7 +752,7 @@ VMPTR_TYPE	VM_realloc(VMPTR_TYPE i, long s)
 
 	/* just	in case VM_alloc did a compact	*/
 
-	h = (VMHEAD  *) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 
 	/* in case both arrays can't be in memory  */
 
@@ -721,15 +772,13 @@ VMPTR_TYPE	VM_realloc(VMPTR_TYPE i, long s)
 
 void	VM_free(VMPTR_TYPE i)
 {
-	VMPTR	p;
-	VMHEAD	 *h,  *t;
+	VMHEAD	 *h;
 	FNAME(VM_free);
 
 	TEST(fun, 0);
-	p.i = i;
-	if (!i	||  p.p.b >= VMBASESIZ	||  p.p.l >= VMLEGSIZ  ||  !VMbase[p.p.b])
+	if (!i	||  i >= VMallocated)
 		return;
-	h = (VMHEAD  *) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 	if (h->type == MT_NOTUSED)
 		return;
 	if (h->type & MT_IMEDIATE)  {
@@ -747,7 +796,7 @@ void	VM_free(VMPTR_TYPE i)
 
 	/* this	must be	redone because free_disk calls dfree_new, rmalloc, compact so the address may change  */
 
-	h = (VMHEAD  *) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 
 	if (h->type & MT_FREEZE)
 		VMnfreez--;
@@ -767,10 +816,9 @@ void	VM_free(VMPTR_TYPE i)
 
 static	void	compact(void)
 {
-	RMHEAD_PTR	h, a, p=NULL, t;
-	register int	b, i;
+	RMHEAD_PTR	h, a, p=NULL;
+	register int	i;
 	int	f, fm;
-	VMHEAD	 *v;
 	RMHEAD	s;
 	DFREE	*ca,  *pa;
 
@@ -781,31 +829,32 @@ static	void	compact(void)
 		f = fm = 1;
 		s.s.next = h->s.next;
 		s.s.size = h->s.size;
-		for (b=0 ; b !=	VMBASESIZ  &&  f  &&  fm  &&  (v=VMbase[b]) ; ++b)
-			if (EQ(a, (RMHEAD_PTR) v))
-				if (!VMnifrez)	{
-
-			 /* make sure this is the far memmove()	!!!   */
-
-					memmove((char  *) h, (char  *) v, (unsigned) (sizeof(VMHEAD) * VMLEGSIZ));
-					VMbase[b] = (VMHEAD *) (char *) h;
-					h += ((VMLEGSIZ	* sizeof(VMHEAD)) + sizeof(RMHEAD) - 1)	/ sizeof(RMHEAD);
-					f = 0;
-				}  else
-					fm = 0;
-
-			else for (i=b?0:1 ; i != VMLEGSIZ  &&  f  &&  fm ; ++i)
-				if (v[i].type &	MT_MEMORY  &&  EQ((RMHEAD_PTR) v[i].mem, a))
-					if (!(v[i].type	& MT_FREEZE))  {
-
-			 /* make sure this is the far memmove()	!!!   */
-
-						memmove((char  *) h, v[i].mem, (unsigned) v[i].size);
-						v[i].mem = (char *) h;
-						h += (v[i].size	+ sizeof(RMHEAD) - 1) /	sizeof(RMHEAD);
+		/* Check if VMbase array itself needs to be moved */
+		if (VMbase && EQ(a, (RMHEAD_PTR) VMbase)) {
+			if (!VMnifrez) {
+				/* Move the entire VMbase array */
+				memmove((char *) h, (char *) VMbase, (unsigned) (sizeof(VMHEAD) * VMallocated));
+				VMbase = (VMHEAD *) h;
+				h += ((VMallocated * sizeof(VMHEAD)) + sizeof(RMHEAD) - 1) / sizeof(RMHEAD);
+				f = 0;
+			} else
+				fm = 0;
+		}
+		/* Check each VM object's memory */
+		else if (VMbase) {
+			for (i = 1; i < VMallocated && f && fm; ++i) {
+				if (VMbase[i].type & MT_MEMORY && EQ((RMHEAD_PTR) VMbase[i].mem, a)) {
+					if (!(VMbase[i].type & MT_FREEZE)) {
+						/* Move the memory block */
+						memmove((char *) h, VMbase[i].mem, (unsigned) VMbase[i].size);
+						VMbase[i].mem = (char *) h;
+						h += (VMbase[i].size + sizeof(RMHEAD) - 1) / sizeof(RMHEAD);
 						f = 0;
-					}  else
+					} else
 						fm = 0;
+				}
+			}
+		}
 
 		if (f  &&  fm)
 			for (pa=NULL,ca=DMflist	; ca ; pa=ca, ca=ca->next)
@@ -857,7 +906,7 @@ int	VM_init(void)
 	VMnfreez = 0;
 	VMnifrez = 0;
 	DMncomp	 = 0;
-	if (r=make_swap())
+	if ((r=make_swap()) != 0)
 		return(r);
 	return(0);
 }
@@ -877,17 +926,17 @@ static	void	page_out(VMHEAD	 *h)
 	FNAME(page_out);
 
 	if (!(h->type &	MT_MEMORY))
-		error(fun, "not MT_MEMORY");
+		error(__func__, "not MT_MEMORY");
 	if (h->type & MT_FREEZE)
-		error(fun, "can't page out frozen memory");
+		error(__func__, "can't page out frozen memory");
 	if (h->type & MT_DIRTY)	 {
 		if (h->diskadd == -1L)
 			h->diskadd = disk_next((long) h->size, h->mem);
 		else  {
 			if (-1L	== lseek(DMhandle, h->diskadd, SEEK_SET))
-				error(fun, "lseek");
+				error(__func__, "lseek");
 			if (h->size != longwrite(DMhandle, h->mem, (long) h->size))
-				error(fun, "write");
+				error(__func__, "write");
 		}
 	}
 	rmfree((RMHEAD_PTR) h->mem, h->size);
@@ -904,7 +953,7 @@ static	long	disk_next(long s, char  *buf)
 
 	register int	ci, bi;
 	long	bs, cs,	da = -1L;
-	DFREE  *ca,  *ba;
+	DFREE  *ca,  *ba = NULL;
 	int	rtf = 1;
 	FNAME(disk_next);
 
@@ -940,8 +989,8 @@ retry:
 		long	sw;
 
 		if (-1L	== lseek(DMhandle, 0L, SEEK_END))
-			error(fun, "lseek");
-		if ((long) s != (sw = longwrite(DMhandle, buf, (long) s)))
+			error(__func__, "lseek");
+		if ((long) s != (sw = longwrite(DMhandle, buf, (long) s))) {
 
 /*  by checking	DMflist	I know that d_compact1 will not	rmalloc	which is something disk_next must NEVER	do */
 
@@ -956,47 +1005,46 @@ retry:
 				d_compact1();
 				if (sw != -1L  &&  add)
 					if (free_disk((MAX_SIZ_TYP) sw,	ta, 1))
-						error(fun, "internal");
+						error(__func__, "internal");
 				rtf = 0;
 				goto retry;
 			}  else
-				error(fun, "write");
+				error(__func__, "write");
+		}
 		DMneedflg = 1;	/* I had to extend the swap file to meet system	needs  */
 		da = DMnext;
 		DMnext += s;
 	}  else	 {
 		DMneedflg = 0;	/* no need to extend swap file	*/
 		if (-1L	== lseek(DMhandle, da, SEEK_SET))
-			error(fun, "lseek");
+			error(__func__, "lseek");
 		if ((long) s != longwrite(DMhandle, buf, (long) s))
-			error(fun, "write");
+			error(__func__, "write");
 	}
 	return(da);
 }
 
 static	VMHEAD		*page_in(VMHEAD	 *h, VMPTR_TYPE i)
 {
-	VMPTR	p;
 	char   *t;
 	FNAME(page_in);
 
-	p.i = i;
 	if (!(h->type &	MT_DISK))
-		error(fun, "not MT_DISK");
+		error(__func__, "not MT_DISK");
 	if (DMhandle ==	-1)
-		error(fun, "no swap file");
+		error(__func__, "no swap file");
 	if (!(t	= rmalloc(h->size)))
 		return NULL;
 
 /*  this must be done because rmalloc calls compact() which may	change the address of h	 */
 
-	h = (VMHEAD  *) &VMbase[p.p.b][p.p.l];
+	h = &VMbase[i];
 	h->mem = t;
 	if (h->diskadd != -1L)	{
 		if (-1L	== lseek(DMhandle, h->diskadd, SEEK_SET))
-			error(fun, "lseek");
+			error(__func__, "lseek");
 		if ((long) h->size != longread(DMhandle, h->mem, (long) h->size))
-			error(fun, "read");
+			error(__func__, "read");
 	}
 	h->type	= MT_MEMORY;
 	VMdisk--;
@@ -1015,8 +1063,8 @@ static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf)
 	long	ss = sz;	/*  search size		*/
 	DFREE	 *ha;	/*  header free	block address	*/
 	int	hi;		/*  header index		*/
-	DFREE	 *ta;	/*  tail free block address	*/
-	int	ti;		/*  tail index			*/
+	DFREE	 *ta = NULL;	/*  tail free block address	*/
+	int	ti = -1;		/*  tail index			*/
 	DFREE	 *za;	/*  zero free block address	*/
 	int	zi = -1;	/*  zero index			*/
 	FNAME(free_disk);
@@ -1075,10 +1123,10 @@ static	int	free_disk(MAX_SIZ_TYP sz, long da, int naf)
 
 static	int	make_swap(void)
 {
-	char	*p, *getenv();
+	char	*p;
 	FNAME(make_swap);
 
-	if (p =	getenv("VMPATH"))  {
+	if ((p = getenv("VMPATH")) != NULL)  {
 		strcpy(DMfile, p);
 		p = DMfile + strlen(DMfile) - 1;
 		if (p >= DMfile	 &&  *p	!= '/'	&&  *p != '\\')
@@ -1098,7 +1146,7 @@ static	int	make_swap(void)
 
 static	void	d_compact(void)
 {
-	if (DMneedflg  &&  (DMmfree  &&	 DMnfree > DMmfree  ||	DMmfblks  &&  DMnfblks > DMmfblks))
+	if (DMneedflg  &&  ((DMmfree  &&  DMnfree > DMmfree)  ||  (DMmfblks  &&  DMnfblks > DMmfblks)))
 		VM_dcmps();
 }
 
@@ -1117,8 +1165,7 @@ void	VM_dcmps(void)
 
 static	void	d_compact2(void)
 {
-	register int	 b, i;
-	VMHEAD		*v;
+	register int	 i;
 	int	handle;
 	char	fn[sizeof DMfile];
 #ifdef NO_ALLOCA
@@ -1138,39 +1185,41 @@ static	void	d_compact2(void)
 	handle = DMhandle;
 	dm_new();
 	if (make_swap())
-		error(fun, "make_swap");
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
-			if ((v[i].type & (MT_MEMORY | MT_DISK))	 &&  v[i].diskadd != -1L)
-				if (v[i].type &	MT_MEMORY)  {
-					v[i].type |= MT_DIRTY;
-					v[i].diskadd = -1L;
+		error(__func__, "make_swap");
+	if (VMbase) {
+		for (i = 1 ; i < VMallocated ; ++i)
+			if ((VMbase[i].type & (MT_MEMORY | MT_DISK)) && VMbase[i].diskadd != -1L) {
+				if (VMbase[i].type &	MT_MEMORY)  {
+					VMbase[i].type |= MT_DIRTY;
+					VMbase[i].diskadd = -1L;
 				}  else	 {
-					unsigned int n = bufsiz	< v[i].size ? bufsiz : v[i].size;
-					MAX_SIZ_TYP	m = v[i].size;
+					unsigned int n = bufsiz	< VMbase[i].size ? bufsiz : VMbase[i].size;
+					MAX_SIZ_TYP	m = VMbase[i].size;
 
-					if (-1L	== lseek(handle, v[i].diskadd, SEEK_SET))
-						error(fun, "lseek");
+					if (-1L	== lseek(handle, VMbase[i].diskadd, SEEK_SET))
+						error(__func__, "lseek");
 					while (m)  {
 						n = n >	m ? m :	n;
 						if (n != read(handle, dbuf, n))
-							error(fun, "read");
+							error(__func__, "read");
 						if (n != write(DMhandle, dbuf, n))
-							error(fun, "write");
+							error(__func__, "write");
 						m -= n;
 					}
-					v[i].diskadd = DMnext;
-					DMnext += v[i].size;
+					VMbase[i].diskadd = DMnext;
+					DMnext += VMbase[i].size;
 				}
+			}
+	}
 	if (-1 == close(handle))
-		error(fun, "close");
+		error(__func__, "close");
 	if (-1 == unlink(fn))
-		error(fun, "unlink");
+		error(__func__, "unlink");
 }
 
 static	void	d_compact1(void)
 {
-	register int	 b, i;
+	register int	 i;
 	VMHEAD		*v;
 #ifdef NO_ALLOCA
 	char	dbuf[NO_ALLOCA];
@@ -1179,7 +1228,7 @@ static	void	d_compact1(void)
 	char	*dbuf;
 	unsigned	bufsiz = 2048;
 #endif
-	long	la = -1L, get_la();
+	long	la = -1L;
 	unsigned int	n;
 	MAX_SIZ_TYP	m;
 	FNAME(d_compact1);
@@ -1188,30 +1237,31 @@ static	void	d_compact1(void)
 	while (NULL == (dbuf = alloca(bufsiz)))
 		bufsiz /= 2;
 #endif
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
-			if (v[i].type &	MT_MEMORY  &&  v[i].diskadd != -1L)  {
-				if (la == -1L  ||  v[i].diskadd	< la)
-					la = v[i].diskadd;
-				v[i].diskadd = -1L;
-				v[i].type |= MT_DIRTY;
-				DMnfree	+= v[i].size;
+	if (VMbase) {
+		for (i = 1 ; i < VMallocated ; ++i)
+			if (VMbase[i].type &	MT_MEMORY  &&  VMbase[i].diskadd != -1L)  {
+				if (la == -1L  ||  VMbase[i].diskadd	< la)
+					la = VMbase[i].diskadd;
+				VMbase[i].diskadd = -1L;
+				VMbase[i].type |= MT_DIRTY;
+				DMnfree	+= VMbase[i].size;
 			}
+	}
 
 	la = get_la(la);
-	while (v = get_dmem(la))  {
+	while ((v = get_dmem(la)))  {
 		n = bufsiz < v->size ? bufsiz :	v->size;
 		m = v->size;
 		while (m)  {
 			n = n >	m ? m :	n;
 			if (-1L	== lseek(DMhandle, v->diskadd+v->size-m, SEEK_SET))
-				error(fun, "lseek");
+				error(__func__, "lseek");
 			if (n != read(DMhandle,	dbuf, n))
-				error(fun, "read");
+				error(__func__, "read");
 			if (-1L	== lseek(DMhandle, la+v->size-m, SEEK_SET))
-				error(fun, "lseek");
+				error(__func__, "lseek");
 			if (n != write(DMhandle, dbuf, n))
-				error(fun, "write");
+				error(__func__, "write");
 			m -= n;
 		}
 		v->diskadd = la;
@@ -1232,7 +1282,7 @@ static	DFREE  *dfree_new(void)
 
 	d = (DFREE  *) rmalloc((MAX_SIZ_TYP)	sizeof(DFREE));
 	if (!d)
-		error(fun, "rmalloc");
+		error(__func__, "rmalloc");
 	for (i=0 ; i !=	DHEADSIZE ; ++i)  {
 		d->nfree[i]    = 0L;
 		d->diskaddr[i] = -1L;
@@ -1272,269 +1322,315 @@ static	long	get_la(long la)    /*  get lowest free block	address	 */
 
 static	VMHEAD   *get_dmem(long da)    /* get vm pointer which is stored just past da  */
 {
-	register int	 b, i;
-	VMHEAD		*v,  *r = NULL;
+	register int	 i;
+	VMHEAD		*r = NULL;
 	long	ba = DMnext;
 	FNAME(get_dmem);
 
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
-			if (v[i].type &	MT_DISK	 &&  v[i].diskadd > da	&&  v[i].diskadd < ba)	{
-				ba = v[i].diskadd;
-				r  = v + i;
+	if (VMbase) {
+		for (i = 1 ; i < VMallocated ; ++i)
+			if (VMbase[i].type &	MT_DISK	 &&  VMbase[i].diskadd > da	&&  VMbase[i].diskadd < ba)	{
+				ba = VMbase[i].diskadd;
+				r  = &VMbase[i];
 			}
+	}
 	return(r);
 }
 
+/* Dump/restore for linear array implementation */
+
+/* Dump file format:
+ * 1. Magic number and version (8 bytes)
+ * 2. VMallocated (sizeof(VMPTR_TYPE))
+ * 3. VM global state (VMfree, VMmru, VMlru, etc.)
+ * 4. VMbase array (VMallocated * sizeof(VMHEAD))
+ * 5. Memory contents for each MT_MEMORY object
+ */
+
+#define DUMP_MAGIC	0x564D454D4C494E  /* "VMEMLIN" in hex */
+#define DUMP_VERSION	1
+
 int	VM_dump(char *f)
 {
-	short	mb;
-	register int	i, b;
-	int	h, s = (sizeof(VMHEAD) * VMLEGSIZ);
-#ifdef NO_ALLOCA
-	char	dbuf[NO_ALLOCA];
-	unsigned	bufsiz = NO_ALLOCA;
-#else
-	char	*dbuf;
-	unsigned	bufsiz = 2048;
-#endif
-	VMHEAD	 *v;
+	int h;
+	VMPTR_TYPE i;
+	long magic = DUMP_MAGIC;
+	int version = DUMP_VERSION;
 	FNAME(VM_dump);
 
 	TEST(fun, 0);
-	h = OPEN(f, O_CREAT | O_WRONLY | O_TRUNC | O_BINARY, S_IREAD | S_IWRITE);
+
+	/* Create dump file */
+	h = open(f, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, S_IREAD | S_IWRITE);
 	if (h == -1)
-		return(1);
-#ifndef NO_ALLOCA
-	while (NULL == (dbuf = alloca(bufsiz)))
-		bufsiz /= 2;
-#endif
-	if (sizeof(VMfree) != write(h, (char *)	&VMfree, sizeof(VMfree)))
-		goto er2;
+		return 1;
 
-	for (mb=0 ; mb != VMBASESIZ  &&	 VMbase[mb] ; ++mb);
-	if (sizeof(mb) != write(h, (char *) &mb, sizeof(mb)))
-		goto er2;
-	for (i=0 ; i !=	mb ; ++i)
-		if (s != write(h, (char	 *) VMbase[i], s))
-			goto er2;
-	for (b=0 ; b !=	mb ; ++b)  {
-		v = VMbase[b];
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)  {
-			if (v[i].type &	MT_MEMORY)  {
-				if ((long) v[i].size != longwrite(h, v[i].mem, (long) v[i].size))
-					goto er2;
-			}  else	 if (v[i].type & MT_DISK  &&  v[i].diskadd != -1L)  {
-				unsigned int n = bufsiz	< v[i].size ? bufsiz : v[i].size;
-				MAX_SIZ_TYP	m = v[i].size;
+	/* Write magic number and version */
+	if (write(h, &magic, sizeof(magic)) != sizeof(magic))
+		goto error;
+	if (write(h, &version, sizeof(version)) != sizeof(version))
+		goto error;
 
-				if (-1L	== lseek(DMhandle, v[i].diskadd, SEEK_SET))
-					error(fun, "lseek");
-				while (m)  {
-					n = n >	m ? m :	n;
-					if (n != read(DMhandle,	dbuf, n))
-						error(fun, "read");
-					if (n != write(h, dbuf,	n))
-						goto er2;
-					m -= n;
-				}
+	/* Write VM state variables */
+	if (write(h, &VMallocated, sizeof(VMallocated)) != sizeof(VMallocated))
+		goto error;
+	if (write(h, &VMfree, sizeof(VMfree)) != sizeof(VMfree))
+		goto error;
+	if (write(h, &VMmru, sizeof(VMmru)) != sizeof(VMmru))
+		goto error;
+	if (write(h, &VMlru, sizeof(VMlru)) != sizeof(VMlru))
+		goto error;
+	if (write(h, &VMlive, sizeof(VMlive)) != sizeof(VMlive))
+		goto error;
+	if (write(h, &VMdisk, sizeof(VMdisk)) != sizeof(VMdisk))
+		goto error;
+	if (write(h, &VMtotal, sizeof(VMtotal)) != sizeof(VMtotal))
+		goto error;
+	if (write(h, &VMnfreez, sizeof(VMnfreez)) != sizeof(VMnfreez))
+		goto error;
+	if (write(h, &VMnifrez, sizeof(VMnifrez)) != sizeof(VMnifrez))
+		goto error;
+
+	/* Write VMbase array if it exists */
+	if (VMbase && VMallocated > 0) {
+		if (write(h, VMbase, VMallocated * sizeof(VMHEAD)) !=
+		    VMallocated * sizeof(VMHEAD))
+			goto error;
+
+		/* Write memory contents for MT_MEMORY objects */
+		for (i = 1; i < VMallocated; i++) {
+			if (VMbase[i].type & MT_MEMORY) {
+				if ((long)VMbase[i].size != longwrite(h, VMbase[i].mem, (long)VMbase[i].size))
+					goto error;
 			}
 		}
 	}
-	if (-1 == close(h))
-		error(fun, "close");
-	TEST(fun, 1);
-	return(0);
-er2:
-	if (-1 == close(h))
-		error(fun, "close");
-	if (-1 == unlink(f))
-		error(fun, "unlink");
-	TEST(fun, 2);
-	return(2);		/*  write error	*/
-}
 
-void	VM_end(void)
-{
-	register int	i, b;
-	VMHEAD		*v;
-	FNAME(VM_end);
-
-	TEST(fun, 0);
-	if (DMhandle !=	-1)  {
-		if (-1 == close(DMhandle))
-			error(fun, "close");
-		if (-1 == unlink(DMfile))
-			error(fun, "unlink");
-	}
-	dm_new();
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)  {
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
-			if (v[i].type &	MT_MEMORY)
-				rmfree((RMHEAD_PTR) v[i].mem, v[i].size);
-		rmfree((RMHEAD_PTR) v, (MAX_SIZ_TYP) (sizeof(VMHEAD) * VMLEGSIZ));
-		VMbase[b] = NULL;
-	}
-	VMfree.i = 0;
-	VMmru.i	 = 0;
-	VMlru.i	 = 0;
-	VMtotal	 = 0L;
-	VMlive	 = 0;
-	VMdisk	 = 0;
-	VMnfreez = 0;
-	VMnifrez = 0;
+	close(h);
 	TEST(fun, 1);
+	return 0;
+
+error:
+	close(h);
+	unlink(f);
+	return 2;
 }
 
 int	VM_rest(char *f)
 {
-	short	mb;
-	register int	i, b;
-	VMPTR	p;
-	int	h, s = (sizeof(VMHEAD) * VMLEGSIZ);
-	VMHEAD		*v;
-	char		*t;
+	int h;
+	VMPTR_TYPE i, old_allocated;
+	long magic;
+	int version;
+	char *mem;
 	FNAME(VM_rest);
 
 	TEST(fun, 0);
+
+	/* Clean up current state */
 	VM_end();
-	VM_init();
-	h = OPEN(f, O_RDONLY | O_BINARY);
-	if (h == -1)		return(1);
-	if (sizeof(VMfree) != read(h, (char *) &VMfree,	sizeof(VMfree)))  {
-		rest_clean(1, h, -1, -1);
-		return(2);
-	}
-	if (sizeof(mb) != read(h, (char	*) &mb,	sizeof(mb)))  {
-		rest_clean(1, h, -1, -1);
-		return(2);
-	}
-	for (i=0 ; i !=	mb ; ++i)  {
-		VMbase[i] = (VMHEAD  *) rmalloc((MAX_SIZ_TYP) s);
-		if (!VMbase[i])	 {
-			rest_clean(2, h, -1, -1);
-			return(3);
-		}
-		if (s != read(h, (char  *) VMbase[i], s))  {
-			rest_clean(2, h, -1, -1);
-			return(2);
-		}
-	}
-	for (b=0 ; b !=	mb ; ++b)  {
-		v = VMbase[b];
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)  {
-			if (v[i].type != MT_NOTUSED  &&	 !(v[i].type & MT_IMEDIATE))
-				VMtotal	+= v[i].size;
-			if (v[i].type != MT_NOTUSED  &&	 (!(v[i].type &	MT_DISK)  ||  v[i].diskadd != -1L))
-				VMlive++;
-			if (v[i].type &	MT_MEMORY  ||  v[i].type & MT_DISK  &&	v[i].diskadd !=	-1L)  {
-				v[i].type = MT_MEMORY |	MT_DIRTY;
-				if (!(t	= rmalloc(v[i].size)))	{
-					rest_clean(3, h, b, i);
-					return(3);
-				}
+	if (VM_init())
+		return 3;
 
-/* this	must be	done because rmalloc calls compact which may change the	address	of VMbase[x]  */
-				v = VMbase[b];
-				v[i].mem = t;
+	/* Open dump file */
+	h = open(f, O_RDONLY | O_BINARY);
+	if (h == -1)
+		return 1;
 
-				if ((long) v[i].size != longread(h, v[i].mem, (long) v[i].size))  {
-					rest_clean(3, h, b, i+1);
-					return(2);
-				}
-				p.p.b =	b;
-				p.p.l =	i;
-				vm_link(&v[i], p.i);
-				v[i].diskadd = -1L;
+	/* Read and verify magic number and version */
+	if (read(h, &magic, sizeof(magic)) != sizeof(magic))
+		goto error;
+	if (magic != DUMP_MAGIC)
+		goto error;
+	if (read(h, &version, sizeof(version)) != sizeof(version))
+		goto error;
+	if (version != DUMP_VERSION)
+		goto error;
+
+	/* Read VM state variables */
+	if (read(h, &old_allocated, sizeof(old_allocated)) != sizeof(old_allocated))
+		goto error;
+	if (read(h, &VMfree, sizeof(VMfree)) != sizeof(VMfree))
+		goto error;
+	if (read(h, &VMmru, sizeof(VMmru)) != sizeof(VMmru))
+		goto error;
+	if (read(h, &VMlru, sizeof(VMlru)) != sizeof(VMlru))
+		goto error;
+	if (read(h, &VMlive, sizeof(VMlive)) != sizeof(VMlive))
+		goto error;
+	if (read(h, &VMdisk, sizeof(VMdisk)) != sizeof(VMdisk))
+		goto error;
+	if (read(h, &VMtotal, sizeof(VMtotal)) != sizeof(VMtotal))
+		goto error;
+	if (read(h, &VMnfreez, sizeof(VMnfreez)) != sizeof(VMnfreez))
+		goto error;
+	if (read(h, &VMnifrez, sizeof(VMnifrez)) != sizeof(VMnifrez))
+		goto error;
+
+	/* Allocate VMbase array */
+	if (old_allocated > 0) {
+		VMbase = (VMHEAD *) rmalloc((MAX_SIZ_TYP)(old_allocated * sizeof(VMHEAD)));
+		if (!VMbase)
+			goto error;
+		VMallocated = old_allocated;
+
+		/* Read VMbase array */
+		if (read(h, VMbase, VMallocated * sizeof(VMHEAD)) !=
+		    VMallocated * sizeof(VMHEAD))
+			goto error;
+
+		/* Restore memory contents for MT_MEMORY objects */
+		for (i = 1; i < VMallocated; i++) {
+			if (VMbase[i].type & MT_MEMORY) {
+				mem = rmalloc((MAX_SIZ_TYP)VMbase[i].size);
+				if (!mem)
+					goto error;
+				VMbase[i].mem = mem;
+				if ((long)VMbase[i].size != longread(h, VMbase[i].mem, (long)VMbase[i].size))
+					goto error;
 			}
 		}
 	}
-	if (-1 == close(h))
-		error(fun, "close");
+
+	close(h);
 	TEST(fun, 1);
-	return(0);
+	return 0;
+
+error:
+	close(h);
+	VM_end();
+	return 2;
 }
 
 int	VM_frest(char *f)
 {
-	short	mb;
-	register int	i, b;
-	int	h, s = (sizeof(VMHEAD) * VMLEGSIZ);
-	VMHEAD		*v;
-	long	da;
+	int h;
+	VMPTR_TYPE i, old_allocated;
+	long magic, da = 0L;
+	int version;
 	FNAME(VM_frest);
 
 	TEST(fun, 0);
+
+	/* For fast restore, we keep the dump file as the swap file */
 	VM_end();
-	TEST(fun, 2);
-	h = OPEN(f, O_RDWR | O_BINARY);
-	if (h == -1)		return(1);
-	if (sizeof(VMfree) != read(h, (char *) &VMfree,	sizeof(VMfree)))  {
-		rest_clean(1, h, -1, -1);
-		return(2);
+
+	/* Open dump file */
+	h = open(f, O_RDWR | O_BINARY);
+	if (h == -1)
+		return 1;
+
+	/* Read and verify magic number and version */
+	if (read(h, &magic, sizeof(magic)) != sizeof(magic)) {
+		close(h);
+		return 2;
 	}
-	if (sizeof(mb) != read(h, (char	*) &mb,	sizeof(mb)))  {
-		rest_clean(1, h, -1, -1);
-		return(2);
+	if (magic != DUMP_MAGIC) {
+		close(h);
+		return 2;
 	}
-	for (i=0 ; i !=	mb ; ++i)  {
-		VMbase[i] = (VMHEAD  *) rmalloc((MAX_SIZ_TYP) s);
-		if (!VMbase[i])	 {
-			rest_clean(2, h, -1, -1);
-			return(3);
+	if (read(h, &version, sizeof(version)) != sizeof(version)) {
+		close(h);
+		return 2;
+	}
+	if (version != DUMP_VERSION) {
+		close(h);
+		return 2;
+	}
+
+	/* Read VM state variables */
+	if (read(h, &old_allocated, sizeof(old_allocated)) != sizeof(old_allocated) ||
+	    read(h, &VMfree, sizeof(VMfree)) != sizeof(VMfree) ||
+	    read(h, &VMmru, sizeof(VMmru)) != sizeof(VMmru) ||
+	    read(h, &VMlru, sizeof(VMlru)) != sizeof(VMlru) ||
+	    read(h, &VMlive, sizeof(VMlive)) != sizeof(VMlive) ||
+	    read(h, &VMdisk, sizeof(VMdisk)) != sizeof(VMdisk) ||
+	    read(h, &VMtotal, sizeof(VMtotal)) != sizeof(VMtotal) ||
+	    read(h, &VMnfreez, sizeof(VMnfreez)) != sizeof(VMnfreez) ||
+	    read(h, &VMnifrez, sizeof(VMnifrez)) != sizeof(VMnifrez)) {
+		close(h);
+		return 2;
+	}
+
+	/* Allocate VMbase array */
+	if (old_allocated > 0) {
+		VMbase = (VMHEAD *) rmalloc((MAX_SIZ_TYP)(old_allocated * sizeof(VMHEAD)));
+		if (!VMbase) {
+			close(h);
+			return 2;
 		}
-		if (s != read(h, (char  *) VMbase[i], s))  {
-			rest_clean(2, h, -1, -1);
-			return(2);
+		VMallocated = old_allocated;
+
+		/* Read VMbase array */
+		if (read(h, VMbase, VMallocated * sizeof(VMHEAD)) !=
+		    VMallocated * sizeof(VMHEAD)) {
+			close(h);
+			VM_end();
+			return 2;
 		}
-	}
-	da = lseek(h, 0L, SEEK_CUR);
-	dfree_new();
-	DMflist->diskaddr[0] = 0L;
-	DMnfree	= DMflist->nfree[0] = da;
-	DMnfblks = 1;
-	for (b=0 ; b !=	mb ; ++b)  {
-		v = VMbase[b];
-		for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)  {
-			if (v[i].type != MT_NOTUSED  &&	 !(v[i].type & MT_IMEDIATE))
-				VMtotal	+= v[i].size;
-			else if	(v[i].type & MT_IMEDIATE)
-				VMlive++;
-			if (v[i].type &	MT_MEMORY  ||  v[i].type & MT_DISK  &&	v[i].diskadd !=	-1L)  {
-				v[i].type = MT_DISK;
-				v[i].diskadd = da;
-				da += v[i].size;
+
+		/* Calculate disk addresses for fast restore */
+		da = sizeof(magic) + sizeof(version) + sizeof(old_allocated) +
+		     sizeof(VMfree) + sizeof(VMmru) + sizeof(VMlru) +
+		     sizeof(VMlive) + sizeof(VMdisk) + sizeof(VMtotal) +
+		     sizeof(VMnfreez) + sizeof(VMnifrez) +
+		     VMallocated * sizeof(VMHEAD);
+
+		/* Update disk addresses for objects stored in the file */
+		for (i = 1; i < VMallocated; i++) {
+			if (VMbase[i].type & MT_MEMORY) {
+				/* These were saved in the dump, treat as on disk now */
+				VMbase[i].type = MT_DISK;
+				VMbase[i].diskadd = da;
+				da += VMbase[i].size;
 				VMdisk++;
+				VMlive--;
 			}
 		}
 	}
+
+	/* Use dump file as swap file */
 	DMhandle = h;
 	strcpy(DMfile, f);
 	DMnext = da;
+
 	TEST(fun, 1);
-	return(0);
+	return 0;
 }
 
-static	void	rest_clean(int lev, int h, int mb, int mi)
+void	VM_end(void)
 {
-	register int	b, i;
-	VMHEAD 	*v;
+	register int i;
+	FNAME(VM_end);
 
-	close(h);
-	VMfree.i = 0;
-	if (lev	<= 1)	return;
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)  {
-		if (lev	== 3  &&  b <= mb)
-			for (i=b?0:1 ; i != VMLEGSIZ  ;	++i)
-				if (v[i].type &	MT_MEMORY  &&  (b != mb	 ||  i < mi))
-					rmfree((RMHEAD_PTR) v[i].mem, v[i].size);
-		rmfree((RMHEAD_PTR) v, (MAX_SIZ_TYP) (sizeof(VMHEAD) * VMLEGSIZ));
-		VMbase[b] = NULL;
+	TEST(fun, 0);
+	if (DMhandle != -1) {
+		close(DMhandle);
+		unlink(DMfile);
 	}
-	if (lev	== 3)  {
-		VMtotal	= 0L;
-		VMlive	= 0;
+	dm_new();
+
+	if (VMbase) {
+		/* Free all allocated memory blocks */
+		for (i = 1; i < VMallocated; ++i) {
+			if (VMbase[i].type & MT_MEMORY)
+				rmfree((RMHEAD_PTR) VMbase[i].mem, VMbase[i].size);
+		}
+		/* Free the VMbase array itself */
+		rmfree((RMHEAD_PTR) VMbase, (MAX_SIZ_TYP) (sizeof(VMHEAD) * VMallocated));
+		VMbase = NULL;
 	}
+
+	VMallocated = 0;
+	VMfree = 0;
+	VMmru = 0;
+	VMlru = 0;
+	VMtotal = 0L;
+	VMlive = 0;
+	VMdisk = 0;
+	VMnfreez = 0;
+	VMnifrez = 0;
+	TEST(fun, 1);
 }
 
 static	long	longread(int fh, char  *buf, long n)
@@ -1575,7 +1671,7 @@ static	long	longwrite(int fh, char  *buf, long n)
 	return tot;
 }
 
-static	void	error(char *f, char *m)
+static	void	error(const char *f, const char *m)
 {
 	fprintf(stderr,	"\nVM system error - %s, %s\n",	f, m);
 	exit(-1);
@@ -1584,16 +1680,16 @@ static	void	error(char *f, char *m)
 void VM_heapwalk(FILE *fp)
 {
 	VMHEAD  *v;
-	VMPTR handle;
-	register int b, i;
+	VMPTR_TYPE handle;
+	register int i;
 
-	fprintf(fp, "Virual Memory Heap Walk\n");
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b) {
-		fprintf(fp, "\nVMbase[%u] = %p\n\n", b, v);
-		for (i=0 ; i !=	VMLEGSIZ  ; ++i,++v) {
-			handle.p.b = b;
-			handle.p.l = i;
-			fprintf(fp, "[%04X] %p - ", handle.i, v);
+	fprintf(fp, "Virtual Memory Heap Walk\n");
+	if (VMbase) {
+		fprintf(fp, "\nVMbase = %p, allocated = %u\n\n", VMbase, VMallocated);
+		v = VMbase;
+		for (i=0 ; i < VMallocated  ; ++i, ++v) {
+			handle = i;
+			fprintf(fp, "[%04X] %p - ", handle, v);
 			switch (v->type	& ~(MT_DIRTY | MT_FREEZE)) {
 				case MT_NOTUSED:
 					fprintf(fp, "Free\n");
@@ -1642,15 +1738,15 @@ static	void rm_test(char *fun, int n, long trm)
 	s = 0L;
 	for (h = RMfree	; h ; h	= h->s.next)  {
 		if (h->s.size <	sizeof(RMHEAD))
-			terror(fun, n, "Invalid RM size");
+			terror(__func__, n, "Invalid RM size");
 		s += h->s.size;
 		if (h->s.next  &&  GTE(h, h->s.next))
-			terror(fun, n, "RMfree not always increasing address");
+			terror(__func__, n, "RMfree not always increasing address");
 	}
 	if (RMnfree != s)
-		terror(fun, n, "RMnfree != total of free list");
+		terror(__func__, n, "RMnfree != total of free list");
 	if (RMtotal != trm + RMnfree)
-		terror(fun, n, "RMtotal not all accessable");
+		terror(__func__, n, "RMtotal not all accessable");
 }
 
 static	void dm_test(char *fun, int n, long tdm)
@@ -1668,24 +1764,24 @@ static	void dm_test(char *fun, int n, long tdm)
 			cs = ca->nfree[ci];
 			if (da != -1L)	{
 				if (da < 0L  ||	 da >= DMnext)
-					terror(fun, n, "bad disk address");
+					terror(__func__, n, "bad disk address");
 				if (cs <= 0L  ||  cs > DMnext -	ts)
-					terror(fun, n, "bad size");
+					terror(__func__, n, "bad size");
 				ts += cs;
 				nfb++;
 			}  else	 if (cs)
-				terror(fun, n, "no disk address, yes size");
+				terror(__func__, n, "no disk address, yes size");
 		}
 	if (ts != DMnfree)
-		terror(fun, n, "bad DMnfree");
+		terror(__func__, n, "bad DMnfree");
 	if (-1L	== (da = lseek(DMhandle, 0L, SEEK_END)))
-		terror(fun, n, "lseek");
+		terror(__func__, n, "lseek");
 	if (DMnext != da)
-		terror(fun, n, "bad DMnext");
+		terror(__func__, n, "bad DMnext");
 	if (tdm	+ DMnfree != DMnext)
-		terror(fun, n, "Not all disk memory accessable");
+		terror(__func__, n, "Not all disk memory accessable");
 	if (nfb	!= DMnfblks)
-		terror(fun, n, "DMnfblks wrong");
+		terror(__func__, n, "DMnfblks wrong");
 }
 
 static	void vm_test(char *fun, int n, long *ptrm, long *ptdm)
@@ -1693,23 +1789,24 @@ static	void vm_test(char *fun, int n, long *ptrm, long *ptdm)
 	register int	b, i;
 	int	mb;
 	VMHEAD	 *v;
-	VMPTR	p, f;
+	VMPTR_TYPE	p, f;
 	long	trm = 0L, tdm =	0L, trm2 = 0L, tlm = 0L, tvm = 0L, tfm = 0L, tsm = 0L, tfrm = 0L;
 	VMPTR_TYPE	live = 0, disk = 0, nfreeze = 0, nifrez	= 0;
 	DFREE		*ca;
 	RMHEAD_PTR	sm;
 
-	for (mb=0 ; mb != VMBASESIZ  &&	 VMbase[mb] ; ++mb);
-	for (b=0 ; b !=	VMBASESIZ  &&  (v=VMbase[b]) ; ++b)  {
-		tlm += RMCHUNK((VMLEGSIZ * sizeof(VMHEAD)));
-		for (i=0 ; i !=	VMLEGSIZ  ; ++i,++v)
+	mb = VMallocated;
+	if (VMbase)  {
+		v = VMbase;
+		tlm += RMCHUNK((VMallocated * sizeof(VMHEAD)));
+		for (i=0 ; i < VMallocated  ; ++i, ++v)
 			switch (v->type	& ~(MT_DIRTY | MT_FREEZE))  {
 				case MT_NOTUSED:
 					if (v->type)
-						terror(fun, n, "Invalid memory type");
+						terror(__func__, n, "Invalid memory type");
 					if (v->lru_link.i)  {
 						if (v->lru_link.p.b >= mb  ||  v->lru_link.p.l >= VMLEGSIZ)
-							terror(fun, n, "Invalid lru link");
+							terror(__func__, n, "Invalid lru link");
 					}
 					break;
 				case MT_IMEDIATE:
@@ -1723,19 +1820,19 @@ static	void vm_test(char *fun, int n, long *ptrm, long *ptdm)
 					if (!(v->type &	MT_FREEZE))  {
 						if (v->mru_link.i)  {
 							if (v->mru_link.p.b >= mb  ||  v->mru_link.p.l >= VMLEGSIZ)
-								terror(fun, n, "Invalid mru link");
+								terror(__func__, n, "Invalid mru link");
 						}  else
 							if (VMmru.p.b != b  ||	VMmru.p.l != i)
-								terror(fun, n, "Bad VMmru or mru link");
+								terror(__func__, n, "Bad VMmru or mru link");
 						if (v->lru_link.i)  {
 							if (v->lru_link.p.b >= mb  ||  v->lru_link.p.l >= VMLEGSIZ)
-								terror(fun, n, "Invalid lru link");
+								terror(__func__, n, "Invalid lru link");
 						}  else
 							if (VMlru.p.b != b  ||	VMlru.p.l != i)
-								terror(fun, n, "Bad VMlru or lru link");
+								terror(__func__, n, "Bad VMlru or lru link");
 					}
 					if (v->size <= IMSIZE)
-						terror(fun, n, "Invalid size");
+						terror(__func__, n, "Invalid size");
 					trm += RMCHUNK(v->size);
 					if (v->type & MT_FREEZE)  {
 						tfrm +=	RMCHUNK(v->size);
@@ -1748,27 +1845,27 @@ static	void vm_test(char *fun, int n, long *ptrm, long *ptdm)
 					disk++;
 					if (v->diskadd != -1L)	{
 						if (v->diskadd < 0  ||	v->diskadd >= DMnext)
-							terror(fun, n, "Invalid disk address");
+							terror(__func__, n, "Invalid disk address");
 						tdm += v->size;
 					}
 					tvm += v->size;
 					break;
 				default:
-					terror(fun, n, "Invalid memory type");
+					terror(__func__, n, "Invalid memory type");
 					break;
 			}
 	}
-	for (f.i=0,p.i = VMmru.i ; p.i	; p.i =	v->lru_link.i)	{
-		if (p.p.b >= mb	 ||  p.p.l >= VMLEGSIZ)
-			terror(fun, n, "Invalid pointer");
-		v = &VMbase[p.p.b][p.p.l];
+	for (f=0, p = VMmru ; p	; p = v->lru_link)	{
+		if (p >= VMallocated)
+			terror(__func__, n, "Invalid pointer");
+		v = &VMbase[p];
 		if (!(v->type &	MT_MEMORY))
-			terror(fun, n, "Invalid memory type");
+			terror(__func__, n, "Invalid memory type");
 		if (v->type & MT_FREEZE)
-			terror(fun, n, "Frozen memory on lru link");
+			terror(__func__, n, "Frozen memory on lru link");
 		trm2 +=	RMCHUNK(v->size);
 		if (v->mru_link.i != f.i)
-			terror(fun, n, "Invalid mru link");
+			terror(__func__, n, "Invalid mru link");
 		f.i = p.i;
 	}
 	for (ca=DMflist	; ca ; ca=ca->next)
@@ -1776,26 +1873,26 @@ static	void vm_test(char *fun, int n, long *ptrm, long *ptdm)
 	for (sm=RMsmem ; sm ; sm=sm->s.next)
 		tsm += sizeof(RMHEAD);
 	if (f.i	!= VMlru.i)
-		terror(fun, n, "Invalid lru link");
+		terror(__func__, n, "Invalid lru link");
 	if (trm2 + tfrm	!= trm)
-		terror(fun, n, "Missing memory");
-	for (p.i = VMfree.i ; p.i  ; p.i = v->lru_link.i)  {
-		if (p.p.b >= mb	 ||  p.p.l >= VMLEGSIZ)
-			terror(fun, n, "Invalid free pointer");
-		v = &VMbase[p.p.b][p.p.l];
+		terror(__func__, n, "Missing memory");
+	for (p = VMfree ; p  ; p = v->lru_link)  {
+		if (p >= VMallocated)
+			terror(__func__, n, "Invalid free pointer");
+		v = &VMbase[p];
 		if (v->type)
-			terror(fun, n, "Invalid type");
+			terror(__func__, n, "Invalid type");
 	}
 	if (tvm	!= VMtotal)
-		terror(fun, n, "VMtotal incorrect");
+		terror(__func__, n, "VMtotal incorrect");
 	if (live != VMlive)
-		terror(fun, n, "VMlive incorrect");
+		terror(__func__, n, "VMlive incorrect");
 	if (disk != VMdisk)
-		terror(fun, n, "VMdisk incorrect");
+		terror(__func__, n, "VMdisk incorrect");
 	if (nfreeze != VMnfreez)
-		terror(fun, n, "VMnfreez incorrect");
+		terror(__func__, n, "VMnfreez incorrect");
 	if (nifrez != VMnifrez)
-		terror(fun, n, "VMnifrez incorrect");
+		terror(__func__, n, "VMnifrez incorrect");
 	*ptrm =	trm + tlm + tfm	+ tsm;
 	*ptdm =	tdm;
 }

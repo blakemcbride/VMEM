@@ -5,9 +5,7 @@ Please see the "License.txt" file for full information.
 
 This is a virtual memory system I wrote a number of years ago.  I used to
 sell it and it works bug free as far as I know.  It was written and tested
-in old K&R C instead of ANSI.  It has now been updated but not re-tested.
-Also, now new, 64 bit machines are out.  The system has not been tested 
-with 64 bit compilers.
+in old K&R C instead of ANSI. 
 
 VMEM is written in C and comes with a complete user and internals manual.
 
@@ -22,6 +20,5 @@ VMEM.3		Internals documentation
 VMEM.OVR	VMEM function overview source
 VMEM.DOC	VMEM documentation source
 VMEM.SYS	Internals documentation source
-SEGMEM.TXT	Some test results using segmented memory on 80x86
 MAC		nroff macros to produce documentation
 

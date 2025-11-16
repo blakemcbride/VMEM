@@ -33,7 +33,8 @@ int main(int argc, char *argv[])
 	}  else
 		max = MAX_ITEMS;
 	VM_init();
-	VM_parm(100000L, 100000L, -1.0, -1L, -1, -1);
+	/* Set max real memory to 20MB, allocation chunk to 1MB */
+	VM_parm(20000000L, 1000000L, -1.0, -1L, -1, -1);
 	if (argc > 2)	
 		mpass = atoi(argv[2]);
 	else	

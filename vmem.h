@@ -15,9 +15,12 @@
 */
 
 
-typedef	unsigned char	LEG_TYPE;
-typedef	unsigned char	BASE_TYPE;
-typedef	unsigned short	VMPTR_TYPE;   /*  large	enough to hold LEG_TYPE	and BASE_TYPE  */
+/* VMPTR_TYPE is now just an index into a linear array */
+#ifdef __LP64__
+  typedef	unsigned int	VMPTR_TYPE;   /* 32-bit index - allows up to 4 billion objects */
+#else
+  typedef	unsigned short	VMPTR_TYPE;   /* 16-bit index - allows up to 65k objects */
+#endif
 
 
 extern int	VM_newadd;			/* set to 1 when memory changed	*/
